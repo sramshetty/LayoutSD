@@ -21,5 +21,5 @@ wget -q https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-
 
 
 ## TODO:
-- [] Generate samples for finetuning
-- [] Implement masking
+- [ ] Generate samples for finetuning
+- [ ] Implement masking
