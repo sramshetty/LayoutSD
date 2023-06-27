@@ -38,19 +38,25 @@ def generate_caption(args, model, transform):
         url = True
     else:
         raise ValueError("images argument must be a directory with images or a text file with image urls")
-          
+    
+    image_paths = image_paths[:args.image_count]
     captions = []
     with torch.no_grad(), torch.cuda.amp.autocast():  
-        for im_path in tqdm(image_paths[:args.image_count], total=min(len(image_paths), args.image_count)):
+        for im_path in tqdm(image_paths, total=len(image_paths)):
             if url:
                 im = Image.open(requests.get(im_path, stream=True).raw).convert("RGB")
             else:
                 im = Image.open(im_path).convert("RGB")
 
-            generated = model.generate(transform(im).unsqueeze(0))  
+            generated = model.generate(transform(im).unsqueeze(0).to(device))  
             captions.append(open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_of_text>", ""))
-
-    return pd.DataFrame([image_paths, captions], columns=["image_path", "caption"])
+    
+    data = {
+        "image_path": image_paths,
+        "caption": captions
+    }
+    
+    return pd.DataFrame(data)
 
 
 def fantasize_bboxes(args, model, caption_df):
@@ -71,7 +77,7 @@ def fantasize_bboxes(args, model, caption_df):
         # convert to xyxy format, scale to image size of 512, and represent as integers
         xyxy = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
         xyxy = np.around(xyxy * 512, 0).astype(np.int32)
-        img_boxes.append([(p, box) for p, box in zip(phrases, xyxy)])   
+        img_boxes.append([str((p, np.array2string(box, separator=", "))) for p, box in zip(phrases, xyxy)])   
 
     caption_df["boxes"] = img_boxes
     return caption_df
@@ -81,7 +87,9 @@ if __name__ == "__main__":
     parser = get_args_parser()
     args = parser.parse_args()
 
+    global devive
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
     clip_model, _, transform = open_clip.create_model_and_transforms(
         model_name=args.clip_model,
         pretrained=args.clip_pretrained
