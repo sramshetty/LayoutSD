@@ -261,7 +261,7 @@ def preprocess_image(sample, image_processor):
     image = [image_processor(s).unsqueeze(0) for s in sample]
     image = torch.cat(image, dim=0)
     # apply random horizontal flip
-    image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
+    # image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     # NOTE: potentially move jitter into the image_preprocessor before normalization
     # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
@@ -301,9 +301,6 @@ def get_webdataset(args, image_processor, epoch=0, floor=False):
             wds.decode("pilrgb", handler=log_and_continue),
             wds.to_tuple("jpg;png;jpeg", "__key__", "__url__", handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
-            wds.map_tuple(
-                preprocess_image_fn, handler=log_and_continue
-            ),
         ]
     )
 

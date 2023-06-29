@@ -14,6 +14,7 @@ from tqdm import tqdm
 import open_clip
 import supervision as sv
 from groundingdino.util.inference import load_model, load_image, predict, box_convert
+import groundingdino.datasets.transforms as T
 
 from data import get_data
 
@@ -68,7 +69,7 @@ def generate_caption(args, model, transform, dataset=None):
                     im = Image.open(im_path).convert("RGB")
                 im = transform(im).unsqueeze(0)
             else:
-                im = im_path[0]
+                im = transform(im_path[0][0]).unsqueeze(0)
                 # Store some information about image when using webdataset
                 paths.append(str((im_path[1][0], im_path[2][0])))
 
@@ -96,7 +97,15 @@ def fantasize_bboxes(args, model, caption_df, dataset=None):
         if dataset is None:
             _, image = load_image(im_path)
         else:
-            image = im_path[0].to(device)
+            # Replicate transformation in "load_image()"
+            det_transform = T.Compose(
+                [
+                    T.RandomResize([800], max_size=1333),
+                    T.ToTensor(),
+                    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+                ]
+            )
+            image, _ = det_transform(im_path[0][0], None)
 
         boxes, _, phrases = predict(
             model=model,
