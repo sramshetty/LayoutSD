@@ -9,6 +9,9 @@ Open Source implementation of [LLM-grounded Diffusion: Enhancing Prompt Understa
 conda create -n "LayoutSD" python=3.9
 pip install -r requirements.txt
 
+git clone https://github.com/sramshetty/LayoutSD.git
+cd LayoutSD
+
 git clone https://github.com/IDEA-Research/GroundingDINO.git
 cd GroundingDINO/
 pip install -e .
@@ -21,5 +24,7 @@ wget -q https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-
 
 
 ## TODO:
-- [ ] Generate samples for finetuning
+- [x] Generate samples for finetuning (currently only 20k)
+    - [ ] Larger set may be nice or necessary
+- [ ] Finetune LM on samples to generate new bounding boxes given a caption
 - [ ] Implement masking

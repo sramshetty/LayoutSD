@@ -299,7 +299,7 @@ def get_webdataset(args, image_processor, epoch=0, floor=False):
             tarfile_to_samples_nothrow,
             wds.select(filter_no_caption_or_no_image),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.to_tuple("jpg;png;jpeg", handler=log_and_continue),
+            wds.to_tuple("jpg;png;jpeg", "__key__", "__url__", handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
             wds.map_tuple(
                 preprocess_image_fn, handler=log_and_continue

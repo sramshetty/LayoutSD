@@ -42,14 +42,14 @@ def get_args_parser():
 
 def generate_caption(args, model, transform, dataset=None):
     url = False
-    if os.path.isdir(args.images):
+    if args.shards is not None:
+        image_paths = dataset.dataloader
+    elif os.path.isdir(args.images):
         image_paths = glob(args.images + "/*.png") + glob(args.images + "/*.jpg") + glob(args.images + "/*.jpeg")
     elif args.images.endswith(".txt"):
         with open(args.images, 'r') as f:
             image_paths = f.readlines()
         url = True
-    elif args.shards is not None:
-        image_paths = dataset.dataloader
     else:
         raise ValueError("images argument must be a directory with images or a text file with image urls")
     
@@ -58,6 +58,7 @@ def generate_caption(args, model, transform, dataset=None):
     
     image_count = args.image_count if args.image_count is not None else len(image_paths)
     captions = []
+    paths = []
     with torch.no_grad(), torch.cuda.amp.autocast():  
         for im_path in tqdm(image_paths, total=image_count):
             if args.shards is None:
@@ -66,10 +67,17 @@ def generate_caption(args, model, transform, dataset=None):
                 else:
                     im = Image.open(im_path).convert("RGB")
                 im = transform(im).unsqueeze(0)
+            else:
+                im = im_path[0]
+                # Store some information about image when using webdataset
+                paths.append(str((im_path[1][0], im_path[2][0])))
 
             generated = model.generate(im.to(device))  
             captions.append(open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_of_text>", ""))
     
+    if args.shards is not None:
+        image_paths = paths
+
     data = {
         "image_path": image_paths,
         "caption": captions
@@ -78,15 +86,19 @@ def generate_caption(args, model, transform, dataset=None):
     return pd.DataFrame(data)
 
 
-def fantasize_bboxes(args, model, caption_df):
+def fantasize_bboxes(args, model, caption_df, dataset=None):
     BOX_TRESHOLD = args.box_threshold
     TEXT_TRESHOLD = args.text_threshold
 
     img_boxes = []
-    for im_path, caption in tqdm(zip(caption_df["image_path"], caption_df["caption"]), total=len(list(caption_df["caption"]))):
-        image_source, image = load_image(im_path)
+    paths = caption_df["image_path"] if dataset is None else dataset.dataloader
+    for im_path, caption in tqdm(zip(paths, caption_df["caption"]), total=len(list(caption_df["caption"]))):
+        if dataset is None:
+            _, image = load_image(im_path)
+        else:
+            image = im_path[0].to(device)
 
-        boxes, logits, phrases = predict(
+        boxes, _, phrases = predict(
             model=model,
             image=image,
             caption=caption,
@@ -125,15 +137,21 @@ if __name__ == "__main__":
 
     print("Generating caption for each image...")
     if args.shards is not None:
+        # Important to avoid shuffling the data here since we split processing into two parts
         dataset = get_data(args, transform)
     captions_df = generate_caption(args, clip_model, transform, dataset)
     del clip_model
+    
+    print("Saving caption results...")
+    captions_df.to_parquet(args.output_parquet, index=False)
 
     det_model = load_model(args.det_config_path, args.det_weights_path)
     det_model.to(device)
 
     print("Predicting boxes for each image...")
-    captions_df = fantasize_bboxes(args, det_model, captions_df)
+    captions_df = fantasize_bboxes(args, det_model, captions_df, dataset)
     
     print("Saving results...")
     captions_df.to_parquet(args.output_parquet, index=False)
+
+    print("Done!")
