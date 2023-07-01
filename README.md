@@ -23,6 +23,21 @@ wget -q https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-
 ```
 
 
+## Finetuning
+
+```
+python finetune.py \
+    --caption_file generated_data/image_layouts_20K.parquet \
+    --batch_size 2 \
+    --workers 0 \
+    --lr 0.00003 \
+    --decay 0.01
+    --epochs 5 \
+    --warmup 5000 \
+    --checkpoint_path checkpoints_large/
+```
+
+
 ## TODO:
 - [x] Generate samples for finetuning (currently only 20k)
     - [ ] Larger set may be nice or necessary
