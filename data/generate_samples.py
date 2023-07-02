@@ -115,9 +115,9 @@ def fantasize_bboxes(args, model, caption_df, dataset=None):
             text_threshold=TEXT_TRESHOLD
         )
         # convert to xywh format, scale to image size of 512 (don't overlap boundary), and represent as integers
-        xyxy = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xywh").numpy()
-        xyxy = np.around(xyxy * 510, 0).astype(np.int32) + 1
-        img_boxes.append([str((p, np.array2string(box, separator=", "))) for p, box in zip(phrases, xyxy)])   
+        xywh = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xywh").numpy()
+        xywh = np.around(xywh * 510, 0).astype(np.int32) + 1
+        img_boxes.append([str((p, np.array2string(box, separator=", "))) for p, box in zip(phrases, xywh)])   
 
     caption_df["boxes"] = img_boxes
     return caption_df
