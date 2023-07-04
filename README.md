@@ -31,15 +31,18 @@ python finetune.py \
     --batch_size 2 \
     --workers 0 \
     --lr 0.00003 \
-    --decay 0.01
+    --decay 0.01 \
     --epochs 5 \
     --warmup 5000 \
-    --checkpoint_path checkpoints_large/
+    --checkpoint_path checkpoints/
 ```
 
 
 ## TODO:
 - [x] Generate samples for finetuning (currently only 20k)
     - [ ] Larger set may be nice or necessary
-- [ ] Finetune LM on samples to generate new bounding boxes given a caption
-- [ ] Implement masking
+- [x] Finetune LM on samples to generate new bounding boxes given a caption\
+- [ ] Per-Box Masked Latent Inversion
+    - [ ] 
+- [ ] Compose Masked Latents w/ Background Latent
+- [ ] Pipeline these steps
