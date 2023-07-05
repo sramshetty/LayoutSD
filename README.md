@@ -1,4 +1,4 @@
-# Layout Diffusion
+# Layout Diffusion (WIP)
 
 Open Source implementation of [LLM-grounded Diffusion: Enhancing Prompt Understanding of Text-to-Image Diffusion Models with Large Language Models](https://arxiv.org/abs/2305.13655).
 
@@ -43,6 +43,9 @@ python finetune.py \
     - [ ] Larger set may be nice or necessary
 - [x] Finetune LM on samples to generate new bounding boxes given a caption\
 - [ ] Per-Box Masked Latent Inversion
-    - [ ] 
+    - [ ] Generate per-xox image w/ cross-attention masking
+    - [ ] Get mask using cross-attention map for object token
+    - [ ] Get inverted latent of image
+    - [ ] Use mask to get object specific inverted latent 
 - [ ] Compose Masked Latents w/ Background Latent
 - [ ] Pipeline these steps
