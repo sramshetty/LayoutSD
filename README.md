@@ -5,6 +5,8 @@ Open Source implementation of [LLM-grounded Diffusion: Enhancing Prompt Understa
 
 ## Installation
 
+Note: Update requirements with your desired CUDA version
+
 ```
 git clone https://github.com/sramshetty/LayoutSD.git
 cd LayoutSD
