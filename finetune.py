@@ -1,6 +1,7 @@
 import argparse
 from ast import literal_eval
 import os
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import autocast
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.optimization import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
@@ -18,7 +20,7 @@ def get_args_parser():
     parser.add_argument("--caption_file", type=str, help="path to parquet of generated samples")
 
     parser.add_argument("--model", default="gpt2-large", type=str)
-    parser.add_argument("--model_f16", action="store_true")
+    parser.add_argument("--model_bfp16", action="store_true")
 
     parser.add_argument("--batch_size", default=1, type=int)
     parser.add_argument("--workers", default=6, type=int)
@@ -61,16 +63,15 @@ def train_epoch(args, model, dataloader, optimizer, scheduler, epoch):
         total=args.epochs * num_steps,
         initial=(epoch * num_steps),
     ):
-
         optimizer.zero_grad()
 
         targets.to(device)
-        outputs = model(
-            **targets,
-            labels=targets['input_ids'],
-        )
-
-        loss = outputs.loss
+        with autocast(dtype=torch.bfloat16):
+            outputs = model(
+                **targets,
+                labels=targets['input_ids'],
+            )
+            loss = outputs.loss
 
         loss.backward()
         optimizer.step()
@@ -86,7 +87,7 @@ def train(args, dataset):
     tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        torch_dtype=torch.float16 if args.model_f16 else torch.float32
+        torch_dtype=torch.bfloat16 if args.model_bfp16 else torch.float32
     ).to(device)
     
     def collate_fn(batch):
@@ -136,9 +137,9 @@ def train(args, dataset):
 
         if args.checkpoint_path is not None and epoch % args.checkpoint_interval == 0:
             print(f"Saving checkpoint for epoch {epoch}...")
-            if args.delete_previous_checkpoint:
-                os.remove(args.checkpoint_path + f"checkpoint{epoch-1}.pt")
-            model.save_pretrained(args.checkpoint_path + f"checkpoint{epoch}.pt")
+            if epoch != 0 and args.delete_previous_checkpoint:
+                shutil.rmtree(args.checkpoint_path + f"checkpoint{epoch-1}")
+            model.save_pretrained(args.checkpoint_path + f"checkpoint{epoch}")
 
 
 if __name__ == "__main__":
