@@ -1,4 +1,5 @@
 import argparse
+from ast import literal_eval
 
 import numpy as np
 import pandas as pd
@@ -7,13 +8,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.optimization import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 
 
 def get_args_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--caption_file", type=str, help="path to parquet of generated samples")
+
+    parser.add_argument("--model", default="gpt2-large", type=str)
+    parser.add_argument("--model_f16", action="store_true")
 
     parser.add_argument("--batch_size", default=1, type=int)
     parser.add_argument("--workers", default=6, type=int)
@@ -35,13 +39,15 @@ class CaptionBoxesDataset(Dataset):
     def __init__(self, caption_file: str):
         df = pd.read_parquet(caption_file)
         self.captions = df['caption'].to_list()
-        self.boxes = df['boxes'].astype("string").to_list()
+        self.boxes = df['boxes'].to_list()
 
     def __len__(self):
         return len(self.captions)
 
     def __getitem__(self, idx):
-        return "Caption: " + self.captions[idx] + "\nObjects: " + self.boxes[idx]
+        bboxes = [literal_eval(bbox) for bbox in self.boxes[idx]]
+        bbox_str = str([(phrase, literal_eval(box)) for phrase, box in bboxes])
+        return "Caption: " + self.captions[idx] + "\nObjects: " + bbox_str
 
 
 def train_epoch(args, model, dataloader, optimizer, scheduler, epoch):
@@ -74,10 +80,12 @@ def train_epoch(args, model, dataloader, optimizer, scheduler, epoch):
 
 def train(args, dataset):
 
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2-large')
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     tokenizer.pad_token = tokenizer.eos_token
-
-    model = GPT2LMHeadModel.from_pretrained('gpt2-large').to(device)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=torch.float16 if args.model_f16 else torch.float32
+    ).to(device)
     
     def collate_fn(batch):
         targets = tokenizer(
