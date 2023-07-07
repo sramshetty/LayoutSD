@@ -1,5 +1,6 @@
 import argparse
 from ast import literal_eval
+import os
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,7 @@ def get_args_parser():
     parser.add_argument("--logging_interval", default=100, type=int)
     parser.add_argument("--checkpoint_path", default=None, type=str)
     parser.add_argument("--checkpoint_interval", default=1, type=int)
+    parser.add_argument("--delete_previous_checkpoint", action="store_true")
 
     return parser
 
@@ -134,6 +136,8 @@ def train(args, dataset):
 
         if args.checkpoint_path is not None and epoch % args.checkpoint_interval == 0:
             print(f"Saving checkpoint for epoch {epoch}...")
+            if args.delete_previous_checkpoint:
+                os.remove(args.checkpoint_path + f"checkpoint{epoch-1}.pt")
             model.save_pretrained(args.checkpoint_path + f"checkpoint{epoch}.pt")
 
 
