@@ -6,11 +6,11 @@ Open Source implementation of [LLM-grounded Diffusion: Enhancing Prompt Understa
 ## Installation
 
 ```
-conda create -n "LayoutSD" python=3.9
-pip install -r requirements.txt
-
 git clone https://github.com/sramshetty/LayoutSD.git
 cd LayoutSD
+
+conda create -n "LayoutSD" python=3.9
+pip install -r requirements.txt
 
 git clone https://github.com/IDEA-Research/GroundingDINO.git
 cd GroundingDINO/
