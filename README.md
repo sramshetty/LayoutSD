@@ -43,9 +43,9 @@ python finetune.py \
 ## TODO:
 - [x] Generate samples for finetuning (currently only 20k)
     - [ ] Larger set may be nice or necessary
-- [x] Finetune LM on samples to generate new bounding boxes given a caption\
+- [x] Finetune LM on samples to generate new bounding boxes given a caption
 - [ ] Per-Box Masked Latent Inversion
-    - [ ] Generate per-xox image w/ cross-attention masking
+    - [ ] Generate per-box image w/ cross-attention masking
     - [ ] Get mask using cross-attention map for object token
     - [ ] Get inverted latent of image
     - [ ] Use mask to get object specific inverted latent 
