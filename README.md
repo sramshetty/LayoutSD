@@ -51,3 +51,23 @@ python finetune.py \
     - [ ] Use mask to get object specific inverted latent 
 - [ ] Compose Masked Latents w/ Background Latent
 - [ ] Pipeline these steps
+
+
+## Acknowledgements
+
+```bibtex
+@article{chen2023trainingfree,
+      title={Training-Free Layout Control with Cross-Attention Guidance}, 
+      author={Minghao Chen and Iro Laina and Andrea Vedaldi},
+      journal={arXiv preprint arXiv:2304.03373},
+      year={2023}
+}
+
+@article{hertz2022prompt,
+  title = {Prompt-to-Prompt Image Editing with Cross Attention Control},
+  author = {Hertz, Amir and Mokady, Ron and Tenenbaum, Jay and Aberman, Kfir and Pritch, Yael and Cohen-Or, Daniel},
+  journal = {arXiv preprint arXiv:2208.01626},
+  year = {2022},
+}
+```
+
