@@ -9,6 +9,9 @@ import math
 import torch
 
 
+LOW_RESOURCE = False
+
+
 class AttentionControl(abc.ABC):
     
     def step_callback(self, x_t):
@@ -19,7 +22,7 @@ class AttentionControl(abc.ABC):
     
     @property
     def num_uncond_att_layers(self):
-        return self.num_att_layers
+        return self.num_att_layers if LOW_RESOURCE else 0
     
     @abc.abstractmethod
     def forward (self, attn, is_cross: bool, place_in_unet: str):
@@ -27,8 +30,11 @@ class AttentionControl(abc.ABC):
 
     def __call__(self, attn, is_cross: bool, place_in_unet: str):
         if self.cur_att_layer >= self.num_uncond_att_layers:
-            h = attn.shape[0]
-            attn[h // 2:] = self.forward(attn[h // 2:], is_cross, place_in_unet)
+            if LOW_RESOURCE:
+                attn = self.forward(attn, is_cross, place_in_unet)
+            else:
+                h = attn.shape[0]
+                attn[h // 2:] = self.forward(attn[h // 2:], is_cross, place_in_unet)
         self.cur_att_layer += 1
         if self.cur_att_layer == self.num_att_layers + self.num_uncond_att_layers:
             self.cur_att_layer = 0

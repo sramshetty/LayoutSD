@@ -1,11 +1,11 @@
 from PIL import Image, ImageDraw
 import numpy as np
 import torch
-from typing import Union, Tuple, List, Callable, Dict, Optional
+from typing import List
 from tqdm.notebook import tqdm
 
-from ptp_utils import init_latent, latent2image, register_attention_control, text_under_image, view_images
-from xattention_guidance import compute_ca_loss, AttentionStore
+from xattention_guidance import ptp_utils
+from xattention_guidance.xattention_guidance import compute_ca_loss, AttentionStore
 
 
 def draw_box(pil_img, bboxes, phrases, save_path):
@@ -47,9 +47,9 @@ def aggregate_attention(prompts: List[str], attention_store: AttentionStore, res
     return out.cpu()
 
 
-def show_cross_attention(model, prompts: List[str], attention_store: AttentionStore, res: int, from_where: List[str], select: int = 0):
-    tokens = model.tokenizer.encode(prompts[select])
-    decoder = model.tokenizer.decode
+def show_cross_attention(tokenizer, prompts: List[str], attention_store: AttentionStore, res: int, from_where: List[str], select: int = 0):
+    tokens = tokenizer.encode(prompts[select])
+    decoder = tokenizer.decode
     attention_maps = aggregate_attention(prompts, attention_store, res, from_where, True, select)
     images = []
     for i in range(len(tokens)):
@@ -58,12 +58,12 @@ def show_cross_attention(model, prompts: List[str], attention_store: AttentionSt
         image = image.unsqueeze(-1).expand(*image.shape, 3)
         image = image.numpy().astype(np.uint8)
         image = np.array(Image.fromarray(image).resize((256, 256)))
-        image = text_under_image(image, decoder(int(tokens[i])))
+        image = ptp_utils.text_under_image(image, decoder(int(tokens[i])))
         images.append(image)
-    view_images(np.stack(images, axis=0))
+    ptp_utils.view_images(np.stack(images, axis=0))
 
 
-def inference(
+def bbox_inference(
     device,
     model,
     controller,
@@ -77,7 +77,7 @@ def inference(
     guidance_scale=7.5
 ):
     # Get Cross-Attentions
-    register_attention_control(model, controller)
+    ptp_utils.register_attention_control(model, controller)
 
     # Get Object Positions
     object_positions = phrase2idx(prompt, phrases)
@@ -101,7 +101,7 @@ def inference(
     text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
     generator = torch.manual_seed(42)  # Seed generator to create the inital latent noise
 
-    _, latents = init_latent(None, model, height=height, width=width, generator=generator, batch_size=1)
+    _, latents = ptp_utils.init_latent(None, model, height=height, width=width, generator=generator, batch_size=1)
 
     model.scheduler.set_timesteps(timesteps)
 
@@ -141,6 +141,6 @@ def inference(
             latents = controller.step_callback(latents)
             torch.cuda.empty_cache()
 
-    images = latent2image(model.vae, latents)
+    images = ptp_utils.latent2image(model.vae, latents)
     pil_images = [Image.fromarray(image) for image in images]
     return pil_images
