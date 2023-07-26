@@ -55,6 +55,8 @@ python finetune.py \
 
 ## Acknowledgements
 
+We thank the following works and their repositories:
+
 ```bibtex
 @article{chen2023trainingfree,
       title={Training-Free Layout Control with Cross-Attention Guidance}, 
