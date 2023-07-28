@@ -1,6 +1,6 @@
 # Layout Diffusion (WIP)
 
-Open Source implementation of [LLM-grounded Diffusion: Enhancing Prompt Understanding of Text-to-Image Diffusion Models with Large Language Models](https://arxiv.org/abs/2305.13655).
+A fully open-source implementation of [LLM-grounded Diffusion: Enhancing Prompt Understanding of Text-to-Image Diffusion Models with Large Language Models](https://arxiv.org/abs/2305.13655).
 
 
 ## Installation
@@ -55,7 +55,18 @@ python finetune.py \
 
 ## Acknowledgements
 
-We thank the following works and their repositories:
+Original Paper
+
+```bibtex
+@article{lian2023llmgrounded,
+    title={LLM-grounded Diffusion: Enhancing Prompt Understanding of Text-to-Image Diffusion Models with Large Language Models}, 
+    author={Lian, Long and Li, Boyi and Yala, Adam and Darrell, Trevor},
+    journal={arXiv preprint arXiv:2305.13655},
+    year={2023}
+}
+```
+
+We thank these additional works for their helpful resources/repositories:
 
 ```bibtex
 @article{chen2023trainingfree,
