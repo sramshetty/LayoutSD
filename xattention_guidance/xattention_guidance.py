@@ -7,6 +7,7 @@
 import abc
 import math
 import torch
+from typing import Tuple
 
 
 LOW_RESOURCE = False
@@ -67,28 +68,43 @@ class AttentionStore(AttentionControl):
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] == 16 ** 2:  # avoid memory overhead
+        if attn.shape[1] == self.block_res[place_in_unet] ** 2:
             self.step_store[key].append(attn)
         return attn
-    
+     
     def set_to_mask(self, masking):
         self.mask = masking
 
     def between_steps(self):
         if not self.mask:
             if len(self.attention_store) == 0:
+                if not self.sum_blocks[0]:
+                    for key in self.step_store:
+                        self.step_store[key] = [torch.cat(self.step_store[key], dim=0)]
                 self.attention_store = self.step_store
             else:
                 for key in self.attention_store:
-                    for i in range(len(self.attention_store[key])):
-                        self.attention_store[key][i] += self.step_store[key][i]
+                    if self.sum_blocks[0]:
+                        for i in range(len(self.attention_store[key])):
+                            self.attention_store[key][i] += self.step_store[key][i]
+                    else:
+                        concat_attn = torch.cat(self.step_store[key], dim=0)
+                        self.attention_store[key] += [concat_attn]
         else:
             if len(self.mask_attention_store) == 0:
+                if not self.sum_blocks[1]:
+                    for key in self.step_store:
+                        self.step_store[key] = [torch.cat(self.step_store[key], dim=0)]
                 self.mask_attention_store = self.step_store
             else:
                 for key in self.mask_attention_store:
-                    for i in range(len(self.mask_attention_store[key])):
-                        self.mask_attention_store[key][i] += self.step_store[key][i]
+                    if self.sum_blocks[1]:
+                        for i in range(len(self.mask_attention_store[key])):
+                            self.mask_attention_store[key][i] += self.step_store[key][i]
+                    else:
+                        concat_attn = torch.cat(self.step_store[key], dim=0)
+                        self.mask_attention_store[key] += [concat_attn]
+
         self.step_store = self.get_empty_store()
 
     def get_average_attention(self, mask=False):
@@ -98,18 +114,28 @@ class AttentionStore(AttentionControl):
             average_attention = {key: [item / self.cur_step for item in self.mask_attention_store[key]] for key in self.mask_attention_store}
         return average_attention
 
-    def reset(self):
+    def get_attention(self, mask=False):
+        if not mask:
+            return self.attention_store
+        else:
+            return self.mask_attention_store
+
+    def reset(self, mask=True):
         super(AttentionStore, self).reset()
         self.step_store = self.get_empty_store()
         self.attention_store = {}
-        self.mask_attention_store = {}
+        if mask:
+            self.mask_attention_store = {}
 
-    def __init__(self):
+    def __init__(self, down_res: int = 16, mid_res: int = 8, up_res: int = 16, sum_blocks: Tuple[bool, bool] = (True, True)):
         super(AttentionStore, self).__init__()
         self.step_store = self.get_empty_store()
         self.attention_store = {}
         self.mask_attention_store = {}
         self.mask = False
+        self.sum_blocks = sum_blocks # Whether to sum or concat attentions for: (attention_store, mask_attention_store)
+
+        self.block_res = {"down": down_res, "mid": mid_res, "up": up_res}
 
 
 def compute_ca_loss(attention_dict, bboxes, object_positions):
@@ -117,7 +143,8 @@ def compute_ca_loss(attention_dict, bboxes, object_positions):
     object_number = len(bboxes)
     if object_number == 0:
         return torch.tensor(0).float().cuda() if torch.cuda.is_available() else torch.tensor(0).float()
-    for attn_map in attention_dict['mid_cross']:
+
+    for attn_map in attention_dict['down_cross']:
         b, i, j = attn_map.shape
         H = W = int(math.sqrt(i))
         for obj_idx in range(object_number):
@@ -157,5 +184,6 @@ def compute_ca_loss(attention_dict, bboxes, object_positions):
 
                 obj_loss += torch.mean((1 - activation_value) ** 2)
             loss += (obj_loss / len(object_positions[obj_idx]))
-    loss = loss / (object_number * (len(attention_dict['up_cross']) + len(attention_dict['mid_cross'])))
+
+    loss = loss / (object_number * (len(attention_dict['up_cross'])) + len(attention_dict['down_cross']))
     return loss
