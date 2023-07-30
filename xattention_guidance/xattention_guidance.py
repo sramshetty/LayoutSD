@@ -143,8 +143,8 @@ def compute_ca_loss(attention_dict, bboxes, object_positions):
     object_number = len(bboxes)
     if object_number == 0:
         return torch.tensor(0).float().cuda() if torch.cuda.is_available() else torch.tensor(0).float()
-
-    for attn_map in attention_dict['down_cross']:
+    
+    for attn_map in attention_dict['mid_cross']:
         b, i, j = attn_map.shape
         H = W = int(math.sqrt(i))
         for obj_idx in range(object_number):
@@ -185,5 +185,5 @@ def compute_ca_loss(attention_dict, bboxes, object_positions):
                 obj_loss += torch.mean((1 - activation_value) ** 2)
             loss += (obj_loss / len(object_positions[obj_idx]))
 
-    loss = loss / (object_number * (len(attention_dict['up_cross'])) + len(attention_dict['down_cross']))
+    loss = loss / (object_number * (len(attention_dict['up_cross'])) + len(attention_dict['mid_cross']))
     return loss
