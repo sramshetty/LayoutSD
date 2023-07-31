@@ -18,7 +18,7 @@ Adapted from: https://github.com/google/prompt-to-prompt/blob/main/ptp_utils.py
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 import cv2
 from typing import Optional, Union, Tuple, List, Callable, Dict
 from IPython.display import display

@@ -1,6 +1,7 @@
 from PIL import Image, ImageDraw
 import numpy as np
 import torch
+import torch.nn.functional as F
 from typing import List
 from tqdm.notebook import tqdm
 
@@ -151,3 +152,63 @@ def bbox_inference(
     images = ptp_utils.latent2image(model.vae, latents)
     pil_images = [Image.fromarray(image) for image in images]
     return pil_images
+
+
+def per_box_image(
+    device,
+    model,
+    box_prompt,
+    background_prompt,  
+    bbox,
+    mask_method="threshold",
+    height=512,
+    width=512,
+    timesteps=51,
+    loss_scale=30,
+    guidance_scale=7.5
+):
+    prompt = background_prompt + "with " + box_prompt
+    phrase = "with " + box_prompt
+
+    controller = AttentionStore(sum_blocks=(False, True))
+
+    pil_images = bbox_inference(
+        device=device,
+        model=model,
+        controller=controller,
+        prompt=prompt,
+        bboxes=bbox,
+        phrases=phrase,
+        height=height,
+        width=width,
+        timesteps=timesteps,
+        loss_scale=loss_scale,
+        guidance_scale=guidance_scale
+    )
+    
+    # Fetch Cross-Attention map for object token
+    # assume that phrase ends with object token; get last occurrence of token
+    obj_idx = phrase2idx(prompt, box_prompt.strip().split()[-1])[-1]
+    attention_maps = aggregate_attention(
+        [prompt],
+        controller,
+        res=16,
+        from_where=('up', 'down')
+    )
+    xattn_map = attention_maps[:, :, obj_idx]
+
+    xattn_mask = F.interpolate(
+        xattn_map.view(1, 1, xattn_map.size(0), xattn_map.size(1)),
+        (height // 8, width // 8),
+        mode='bicubic'
+    )
+
+    if mask_method == "threshold":
+        xattn_hist = torch.histogram(xattn_mask.flatten(), 100)
+        threshold_bin = torch.where((xattn_hist.hist.cumsum(0) / xattn_mask.numel()) > 0.95)[0][0]
+        threshold = xattn_hist.bin_edges[threshold_bin]
+        xattn_mask = torch.where(xattn_mask > threshold, 1., 0.)
+    else:
+        raise NotImplementedError
+    
+    return pil_images[0], xattn_mask
