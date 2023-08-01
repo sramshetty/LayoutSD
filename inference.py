@@ -164,7 +164,8 @@ def per_box_image(
     width=512,
     timesteps=50,
     loss_scale=30,
-    guidance_scale=7.5
+    guidance_scale=7.5,
+    seed=0,
 ):
     prompt = background_prompt + " with " + box_prompt
     phrase = "with " + box_prompt
@@ -181,7 +182,8 @@ def per_box_image(
         width=width,
         timesteps=timesteps,
         loss_scale=loss_scale,
-        guidance_scale=guidance_scale
+        guidance_scale=guidance_scale,
+        seed=seed
     )
     
     # Fetch Cross-Attention map for object token
@@ -220,7 +222,7 @@ def per_image_latents(
     image: Union[Image.Image, np.array],
 ):
     if type(image) is Image.Image:
-        image = np.array(Image.open("test.png"))
+        image = np.array(image)
 
     image = torch.from_numpy(image).float() / 127.5 - 1
     image = image.permute(2, 0, 1).unsqueeze(0).to(model.device)
@@ -248,16 +250,17 @@ def compose_latents(
         generator=generator,
         batch_size=1
     )
-    init_latents = init_latents * model.scheduler.init_noise_sigma
+    background_latents = init_latents * model.scheduler.init_noise_sigma
 
-    foreground_mask = torch.ones(masks[0].size(), dtype=masks[0].dtype, device=masks[0].device)
+    foreground_mask = torch.ones(masks[0].size(), dtype=masks[0].dtype, device=model.device)
 
     # Could blend like original repo
     for im_latent, im_mask in zip(latents, masks):
-        init_latents = init_latents * (1 - im_mask) + im_latent * im_mask
+        im_mask = im_mask.to(model.device)
+        background_latents = background_latents * (1 - im_mask) + im_latent * im_mask
         foreground_mask -= im_mask
     
-    return init_latents, foreground_mask
+    return background_latents, foreground_mask
 
 
 @torch.no_grad()

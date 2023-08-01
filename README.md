@@ -44,13 +44,20 @@ python finetune.py \
 - [x] Generate samples for finetuning (currently only 20k)
     - [ ] Larger set may be nice or necessary
 - [x] Finetune LM on samples to generate new bounding boxes given a caption
-- [ ] Per-Box Masked Latent Inversion
-    - [ ] Generate per-box image w/ cross-attention masking
-    - [ ] Get mask using cross-attention map for object token
-    - [ ] Get inverted latent of image
-    - [ ] Use mask to get object specific inverted latent 
-- [ ] Compose Masked Latents w/ Background Latent
-- [ ] Pipeline these steps
+- [x] Per-Box Masked Latent Inversion
+    - [x] Generate per-box image w/ cross-attention masking
+    - [x] Get mask using cross-attention map for object token
+    - [x] Get inverted latent of image
+    - [x] Use mask to get object specific inverted latent 
+- [x] Compose Masked Latents w/ Background Latent
+- [x] Pipeline these steps
+
+Next:
+- LLM for example generation
+- Improve per-box image generation -> more consistency
+- Refine masking method
+- Better compositional generation strategy?
+- Larger SD model?
 
 
 ## Acknowledgements
