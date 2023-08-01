@@ -2,7 +2,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 import torch
 import torch.nn.functional as F
-from typing import List
+from typing import List, Union
 from tqdm.notebook import tqdm
 
 from xattention_guidance import ptp_utils
@@ -75,7 +75,8 @@ def bbox_inference(
     width=512,
     timesteps=51,
     loss_scale=30,
-    guidance_scale=7.5
+    guidance_scale=7.5,
+    seed=0
 ):
     # Get Cross-Attentions
     ptp_utils.register_attention_control(model, controller)
@@ -87,13 +88,13 @@ def bbox_inference(
 
     # Encode Classifier Embeddings
     uncond_input = model.tokenizer(
-        [""] * 1, padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
+        [""], padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
     )
     uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(device))[0]
 
     # Encode Prompt
     input_ids = model.tokenizer(
-            [prompt] * 1,
+            [prompt],
             padding="max_length",
             truncation=True,
             max_length=model.tokenizer.model_max_length,
@@ -102,7 +103,7 @@ def bbox_inference(
 
     cond_embeddings = model.text_encoder(input_ids.input_ids.to(device))[0]
     text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
-    generator = torch.manual_seed(42)  # Seed generator to create the inital latent noise
+    generator = torch.manual_seed(seed)  # Seed generator to create the inital latent noise
 
     _, latents = ptp_utils.init_latent(None, model, height=height, width=width, generator=generator, batch_size=1)
 
@@ -207,8 +208,110 @@ def per_box_image(
         xattn_hist = torch.histogram(xattn_mask.flatten(), 100)
         threshold_bin = torch.where((xattn_hist.hist.cumsum(0) / xattn_mask.numel()) > 0.95)[0][0]
         threshold = xattn_hist.bin_edges[threshold_bin]
-        xattn_mask = torch.where(xattn_mask > threshold, 1., 0.)
+        latent_mask = torch.where(xattn_mask > threshold, 1., 0.)
     else:
         raise NotImplementedError
     
-    return pil_images[0], xattn_mask
+    return pil_images[0], latent_mask
+
+
+@torch.no_grad()
+def per_image_latents(
+    model,
+    image: Union[Image.Image, np.array],
+):
+    if type(image) is Image.Image:
+        image = np.array(Image.open("test.png"))
+
+    image = torch.from_numpy(image).float() / 127.5 - 1
+    image = image.permute(2, 0, 1).unsqueeze(0).to(model.device)
+    latents = model.vae.encode(image)['latent_dist'].mean
+    latents = latents * 0.18215
+
+    return latents
+
+
+@torch.no_grad()
+def compose_latents(
+    model,
+    latents: List[torch.Tensor],
+    masks: List[torch.Tensor], 
+    height: int = 512,
+    width:int = 512,
+    seed:int = 0
+):
+    generator = torch.manual_seed(seed)  # Seed generator to create the inital latent noise
+    _, init_latents = ptp_utils.init_latent(
+        None,
+        model,
+        height=height,
+        width=width,
+        generator=generator,
+        batch_size=1
+    )
+    init_latents = init_latents * model.scheduler.init_noise_sigma
+
+    foreground_mask = torch.ones(masks[0].size(), dtype=masks[0].dtype, device=masks[0].device)
+
+    # Could blend like original repo
+    for im_latent, im_mask in zip(latents, masks):
+        init_latents = init_latents * (1 - im_mask) + im_latent * im_mask
+        foreground_mask -= im_mask
+    
+    return init_latents, foreground_mask
+
+
+@torch.no_grad()
+def generate(
+    model,
+    latents,
+    prompt,
+    foreground_mask,
+    foreground_ratio=0.6,
+    inference_steps=50,
+    guidance_scale=7.5
+):
+    # Encode Classifier Embeddings
+    uncond_input = model.tokenizer(
+        [""] * 1, padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
+    )
+    uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
+    
+    input_ids = model.tokenizer(
+        [prompt],
+        padding="max_length",
+        truncation=True,
+        max_length=model.tokenizer.model_max_length,
+        return_tensors="pt",
+    )
+
+    cond_embeddings = model.text_encoder(input_ids.input_ids.to(model.device))[0]
+    text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
+
+    latents = latents.to(model.device)
+    og_latents = latents.clone()
+    foreground_mask = foreground_mask.to(model.device)
+
+    model.scheduler.set_timesteps(inference_steps)
+    
+    for i, t in enumerate(tqdm(model.scheduler.timesteps)):
+        latent_model_input = torch.cat([latents] * 2)
+
+        latent_model_input = model.scheduler.scale_model_input(latent_model_input, t)
+        noise_pred = model.unet(latent_model_input, t, encoder_hidden_states=text_embeddings)["sample"]
+
+        # perform guidance
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+        latents = model.scheduler.step(noise_pred, t, latents).prev_sample
+
+        # Mask foreground for fraction of steps to allow background to be "foreground-aware"
+        if i < inference_steps * foreground_ratio:
+            latents = latents * foreground_mask + og_latents * (1 - foreground_mask)
+
+        torch.cuda.empty_cache()
+
+    images = ptp_utils.latent2image(model.vae, latents)
+    pil_images = [Image.fromarray(image) for image in images]
+    return pil_images
