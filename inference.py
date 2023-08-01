@@ -65,7 +65,6 @@ def show_cross_attention(tokenizer, prompts: List[str], attention_store: Attenti
 
 
 def bbox_inference(
-    device,
     model,
     controller,
     prompt,
@@ -73,7 +72,7 @@ def bbox_inference(
     phrases,
     height=512,
     width=512,
-    timesteps=51,
+    timesteps=50,
     loss_scale=30,
     guidance_scale=7.5,
     seed=0
@@ -90,7 +89,7 @@ def bbox_inference(
     uncond_input = model.tokenizer(
         [""], padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
     )
-    uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(device))[0]
+    uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
 
     # Encode Prompt
     input_ids = model.tokenizer(
@@ -101,7 +100,7 @@ def bbox_inference(
             return_tensors="pt",
         )
 
-    cond_embeddings = model.text_encoder(input_ids.input_ids.to(device))[0]
+    cond_embeddings = model.text_encoder(input_ids.input_ids.to(model.device))[0]
     text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
     generator = torch.manual_seed(seed)  # Seed generator to create the inital latent noise
 
@@ -156,7 +155,6 @@ def bbox_inference(
 
 
 def per_box_image(
-    device,
     model,
     box_prompt,
     background_prompt,  
@@ -164,21 +162,20 @@ def per_box_image(
     mask_method="threshold",
     height=512,
     width=512,
-    timesteps=51,
+    timesteps=50,
     loss_scale=30,
     guidance_scale=7.5
 ):
-    prompt = background_prompt + "with " + box_prompt
+    prompt = background_prompt + " with " + box_prompt
     phrase = "with " + box_prompt
 
     controller = AttentionStore(sum_blocks=(False, True))
 
     pil_images = bbox_inference(
-        device=device,
         model=model,
         controller=controller,
         prompt=prompt,
-        bboxes=bbox,
+        bboxes=[bbox],
         phrases=phrase,
         height=height,
         width=width,
@@ -194,7 +191,9 @@ def per_box_image(
         [prompt],
         controller,
         res=16,
-        from_where=('up', 'down')
+        from_where=('up', 'down'),
+        is_cross=True,
+        select=0
     )
     xattn_map = attention_maps[:, :, obj_idx]
 
