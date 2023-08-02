@@ -9,6 +9,15 @@ from xattention_guidance import ptp_utils
 from xattention_guidance.xattention_guidance import compute_ca_loss, AttentionStore
 
 
+NEGATIVE_PROMPT = (
+    "out of frame, cropped, low quality, jpeg artifacts, ugly, duplicate, "
+    "mutilated, mutated hands, mutation, deformed, blurry, "
+    "bad anatomy, bad proportions, disfigured, "
+    "malformed limbs, missing arms, missing legs, extra arms, "
+    "extra legs, fused fingers, too many fingers, watermark, signature"
+)
+
+
 def draw_box(pil_img, bboxes, phrases, save_path):
     draw = ImageDraw.Draw(pil_img)
     phrases = [x.strip() for x in phrases.split(';')]
@@ -34,7 +43,14 @@ def phrase2idx(prompt, phrases):
     return object_positions
 
 
-def aggregate_attention(prompts: List[str], attention_store: AttentionStore, res: int, from_where: List[str], is_cross: bool, select: int):
+def aggregate_attention(
+    prompts: List[str],
+    attention_store: AttentionStore,
+    res: int,
+    from_where: List[str],
+    is_cross: bool,
+    select: int
+):
     out = []
     attention_maps = attention_store.get_average_attention(mask=True)
     num_pixels = res ** 2
@@ -48,7 +64,14 @@ def aggregate_attention(prompts: List[str], attention_store: AttentionStore, res
     return out.cpu()
 
 
-def show_cross_attention(tokenizer, prompts: List[str], attention_store: AttentionStore, res: int, from_where: List[str], select: int = 0):
+def show_cross_attention(
+    tokenizer,
+    prompts: List[str],
+    attention_store: AttentionStore,
+    res: int,
+    from_where: List[str],
+    select: int = 0
+):
     tokens = tokenizer.encode(prompts[select])
     decoder = tokenizer.decode
     attention_maps = aggregate_attention(prompts, attention_store, res, from_where, True, select)
@@ -87,7 +110,10 @@ def bbox_inference(
 
     # Encode Classifier Embeddings
     uncond_input = model.tokenizer(
-        [""], padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
+        [NEGATIVE_PROMPT],
+        padding="max_length",
+        max_length=model.tokenizer.model_max_length,
+        return_tensors="pt"
     )
     uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
 
@@ -275,7 +301,7 @@ def generate(
 ):
     # Encode Classifier Embeddings
     uncond_input = model.tokenizer(
-        [""] * 1, padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
+        [NEGATIVE_PROMPT], padding="max_length", max_length=model.tokenizer.model_max_length, return_tensors="pt"
     )
     uncond_embeddings = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
     
