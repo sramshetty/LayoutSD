@@ -103,7 +103,7 @@ def bbox_inference(
     # Get Cross-Attentions
     ptp_utils.register_attention_control(model, controller)
 
-    reset_mask = not controller.sum_blocks[1]
+    reset_default, reset_mask = not controller.sum_blocks[0], not controller.sum_blocks[1]
 
     # Get Object Positions
     object_positions = phrase2idx(prompt, phrases)
@@ -154,7 +154,7 @@ def bbox_inference(
             latents = latents - grad_cond * model.scheduler.sigmas[index] ** 2
             iteration += 1
             torch.cuda.empty_cache()
-            controller.reset(mask=reset_mask)
+            controller.reset(default=reset_default, mask=reset_mask)
 
         controller.set_to_mask(True)
         with torch.no_grad():
@@ -173,7 +173,7 @@ def bbox_inference(
 
             # Store last map for cross-attenting masking
             if index < len(model.scheduler.timesteps) - 1:
-                controller.reset(mask=reset_mask)
+                controller.reset(default=reset_default, mask=reset_mask)
 
     images = ptp_utils.latent2image(model.vae, latents)
     pil_images = [Image.fromarray(image) for image in images]
@@ -196,7 +196,7 @@ def per_box_image(
     prompt = background_prompt + " with " + box_prompt
     phrase = "with " + box_prompt
 
-    controller = AttentionStore(sum_blocks=(False, True))
+    controller = AttentionStore(down_res=16, mid_res=8, up_res=16, sum_blocks=(False, True))
 
     pil_images = bbox_inference(
         model=model,

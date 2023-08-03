@@ -120,10 +120,11 @@ class AttentionStore(AttentionControl):
         else:
             return self.mask_attention_store
 
-    def reset(self, mask=True):
+    def reset(self, default=True, mask=True):
         super(AttentionStore, self).reset()
         self.step_store = self.get_empty_store()
-        self.attention_store = {}
+        if default:
+            self.attention_store = {}
         if mask:
             self.mask_attention_store = {}
 
@@ -152,8 +153,7 @@ def compute_ca_loss(attention_dict, bboxes, object_positions):
             mask = torch.zeros(size=(H, W)).cuda() if torch.cuda.is_available() else torch.zeros(size=(H, W))
             for obj_box in bboxes[obj_idx]:
 
-                x_min, y_min, x_max, y_max = int(obj_box[0] * W), \
-                    int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
+                x_min, y_min, x_max, y_max = int(obj_box[0] * W), int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
                 mask[y_min: y_max, x_min: x_max] = 1
 
             for obj_position in object_positions[obj_idx]:
@@ -172,15 +172,13 @@ def compute_ca_loss(attention_dict, bboxes, object_positions):
             obj_loss = 0
             mask = torch.zeros(size=(H, W)).cuda() if torch.cuda.is_available() else torch.zeros(size=(H, W))
             for obj_box in bboxes[obj_idx]:
-                x_min, y_min, x_max, y_max = int(obj_box[0] * W), \
-                    int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
+                x_min, y_min, x_max, y_max = int(obj_box[0] * W), int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
                 mask[y_min: y_max, x_min: x_max] = 1
 
             for obj_position in object_positions[obj_idx]:
                 ca_map_obj = attn_map[:, :, obj_position].reshape(b, H, W)
 
-                activation_value = (ca_map_obj * mask).reshape(b, -1).sum(dim=-1) / ca_map_obj.reshape(b, -1).sum(
-                    dim=-1)
+                activation_value = (ca_map_obj * mask).reshape(b, -1).sum(dim=-1) / ca_map_obj.reshape(b, -1).sum(dim=-1)
 
                 obj_loss += torch.mean((1 - activation_value) ** 2)
             loss += (obj_loss / len(object_positions[obj_idx]))
