@@ -11,7 +11,7 @@ from xattention_guidance.xattention_guidance import compute_ca_loss, AttentionSt
 
 NEGATIVE_PROMPT = (
     "out of frame, cropped, low quality, jpeg artifacts, ugly, duplicate, "
-    "mutilated, mutated hands, mutation, deformed, blurry, "
+    "mutilated, mutation, deformed, blurry, wrong location, "
     "bad anatomy, bad proportions, disfigured, "
     "malformed limbs, missing arms, missing legs, extra arms, "
     "extra legs, fused fingers, too many fingers, watermark, signature"
@@ -93,6 +93,7 @@ def bbox_inference(
     prompt,
     bboxes,
     phrases,
+    from_where=["up", "mid"],
     height=512,
     width=512,
     timesteps=50,
@@ -148,7 +149,12 @@ def bbox_inference(
             noise_pred = model.unet(latent_model_input, t, encoder_hidden_states=cond_embeddings)["sample"]
 
             # update latents with guidance
-            loss = compute_ca_loss(controller.get_average_attention(), bboxes=bboxes, object_positions=object_positions) * loss_scale
+            loss = compute_ca_loss(
+                attention_dict=controller.get_average_attention(),
+                bboxes=bboxes,
+                object_positions=object_positions,
+                from_where=from_where
+            ) * loss_scale
             grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
 
             latents = latents - grad_cond * model.scheduler.sigmas[index] ** 2
@@ -185,6 +191,7 @@ def per_box_image(
     box_prompt,
     background_prompt,  
     bbox,
+    from_where=["up", "mid"],
     mask_method="threshold",
     height=512,
     width=512,
@@ -204,6 +211,7 @@ def per_box_image(
         prompt=prompt,
         bboxes=[bbox],
         phrases=phrase,
+        from_where=from_where,
         height=height,
         width=width,
         timesteps=timesteps,

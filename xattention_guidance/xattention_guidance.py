@@ -7,7 +7,7 @@
 import abc
 import math
 import torch
-from typing import Tuple
+from typing import Tuple, Dict, List
 
 
 LOW_RESOURCE = False
@@ -139,49 +139,43 @@ class AttentionStore(AttentionControl):
         self.block_res = {"down": down_res, "mid": mid_res, "up": up_res}
 
 
-def compute_ca_loss(attention_dict, bboxes, object_positions):
+def compute_ca_loss(
+    attention_dict: Dict[str, torch.Tensor],
+    bboxes: List[List[List[float]]],
+    object_positions: List[int],
+    from_where: List[str]
+):
     loss = 0
     object_number = len(bboxes)
     if object_number == 0:
         return torch.tensor(0).float().cuda() if torch.cuda.is_available() else torch.tensor(0).float()
     
-    for attn_map in attention_dict['mid_cross']:
-        b, i, j = attn_map.shape
-        H = W = int(math.sqrt(i))
-        for obj_idx in range(object_number):
-            obj_loss = 0
-            mask = torch.zeros(size=(H, W)).cuda() if torch.cuda.is_available() else torch.zeros(size=(H, W))
-            for obj_box in bboxes[obj_idx]:
+    attn_list = [attention_dict[f'{loc}_cross'] for loc in from_where]
 
-                x_min, y_min, x_max, y_max = int(obj_box[0] * W), int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
-                mask[y_min: y_max, x_min: x_max] = 1
+    for attention in attn_list:
+        for attn_map in attention:
+            # print("up", attn_map.shape)
+            b, i, j = attn_map.shape
+            H = W = int(math.sqrt(i))
 
-            for obj_position in object_positions[obj_idx]:
-                ca_map_obj = attn_map[:, :, obj_position].reshape(b, H, W)
+            for obj_idx in range(object_number):
+                obj_loss = 0
+                mask = torch.zeros(size=(H, W)).cuda() if torch.cuda.is_available() else torch.zeros(size=(H, W))
+                for obj_box in bboxes[obj_idx]:
+                    x_min, y_min, x_max, y_max = int(obj_box[0] * W), \
+                        int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
+                    mask[y_min: y_max, x_min: x_max] = 1
 
-                activation_value = (ca_map_obj * mask).reshape(b, -1).sum(dim=-1)/ca_map_obj.reshape(b, -1).sum(dim=-1)
+                for obj_position in object_positions[obj_idx]:
+                    ca_map_obj = attn_map[:, :, obj_position].reshape(b, H, W)
 
-                obj_loss += torch.mean((1 - activation_value) ** 2)
-            loss += (obj_loss/len(object_positions[obj_idx]))
+                    activation_value = (ca_map_obj * mask).reshape(b, -1).sum(dim=-1) / ca_map_obj.reshape(b, -1).sum(
+                        dim=-1)
 
-    for attn_map in attention_dict['up_cross']:
-        b, i, j = attn_map.shape
-        H = W = int(math.sqrt(i))
+                    obj_loss += torch.mean((1 - activation_value) ** 2)
+                loss += (obj_loss / len(object_positions[obj_idx]))
 
-        for obj_idx in range(object_number):
-            obj_loss = 0
-            mask = torch.zeros(size=(H, W)).cuda() if torch.cuda.is_available() else torch.zeros(size=(H, W))
-            for obj_box in bboxes[obj_idx]:
-                x_min, y_min, x_max, y_max = int(obj_box[0] * W), int(obj_box[1] * H), int(obj_box[2] * W), int(obj_box[3] * H)
-                mask[y_min: y_max, x_min: x_max] = 1
+    num_attns = sum([len(attn) for attn in attn_list])            
 
-            for obj_position in object_positions[obj_idx]:
-                ca_map_obj = attn_map[:, :, obj_position].reshape(b, H, W)
-
-                activation_value = (ca_map_obj * mask).reshape(b, -1).sum(dim=-1) / ca_map_obj.reshape(b, -1).sum(dim=-1)
-
-                obj_loss += torch.mean((1 - activation_value) ** 2)
-            loss += (obj_loss / len(object_positions[obj_idx]))
-
-    loss = loss / (object_number * (len(attention_dict['up_cross'])) + len(attention_dict['mid_cross']))
+    loss = loss / (object_number * num_attns)
     return loss
