@@ -199,11 +199,12 @@ def per_box_image(
     loss_scale=30,
     guidance_scale=7.5,
     seed=0,
+    show_xattn=False
 ):
     prompt = background_prompt + " with " + box_prompt
     phrase = "with " + box_prompt
 
-    controller = AttentionStore(down_res=16, mid_res=8, up_res=16, sum_blocks=(False, True))
+    controller = AttentionStore(down_res=16, mid_res=8, up_res=16, sum_blocks=(False, False))
 
     pil_images = bbox_inference(
         model=model,
@@ -224,8 +225,8 @@ def per_box_image(
     # assume that phrase ends with object token; get last occurrence of token
     obj_idx = phrase2idx(prompt, box_prompt.strip().split()[-1])[-1]
     attention_maps = aggregate_attention(
-        [prompt],
-        controller,
+        prompts=[prompt],
+        attention_store=controller,
         res=16,
         from_where=('up', 'down'),
         is_cross=True,
@@ -246,6 +247,15 @@ def per_box_image(
         latent_mask = torch.where(xattn_mask > threshold, 1., 0.)
     else:
         raise NotImplementedError
+    
+    if show_xattn:
+        show_cross_attention(
+            tokenizer=model.tokenizer,
+            prompts=[prompt],
+            attention_store=controller,
+            res=16,
+            from_where=('up', 'down')
+        )
     
     return pil_images[0], latent_mask
 
@@ -273,28 +283,29 @@ def compose_latents(
     masks: List[torch.Tensor], 
     height: int = 512,
     width:int = 512,
+    blend_ratio: float = 0.01,
     seed:int = 0
 ):
     generator = torch.manual_seed(seed)  # Seed generator to create the inital latent noise
     _, init_latents = ptp_utils.init_latent(
-        None,
-        model,
+        latent=None,
+        model=model,
         height=height,
         width=width,
         generator=generator,
         batch_size=1
     )
-    background_latents = init_latents * model.scheduler.init_noise_sigma
+    all_latents = init_latents * model.scheduler.init_noise_sigma
 
     foreground_mask = torch.ones(masks[0].size(), dtype=masks[0].dtype, device=model.device)
 
-    # Could blend like original repo
+    # Blend like original repo: https://github.com/TonyLianLong/LLM-groundedDiffusion/blob/ce374b3d040bd0b818a2ef58e9bb35ba4e5c897d/code/llm-grounded-diffusion/utils/latents.py#L32C15-L32C143
     for im_latent, im_mask in zip(latents, masks):
         im_mask = im_mask.to(model.device)
-        background_latents = background_latents * (1 - im_mask) + im_latent * im_mask
+        all_latents = all_latents * (1 - im_mask) + (all_latents * np.sqrt(1 - blend_ratio) + im_latent * np.sqrt(blend_ratio)) * im_mask
         foreground_mask -= im_mask
     
-    return background_latents, foreground_mask
+    return all_latents, foreground_mask
 
 
 @torch.no_grad()
