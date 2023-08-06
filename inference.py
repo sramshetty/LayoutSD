@@ -64,6 +64,26 @@ def aggregate_attention(
     return out.cpu()
 
 
+def get_attention(
+    prompts: List[str],
+    attention_store: AttentionStore,
+    res: int,
+    from_where: List[str],
+    is_cross: bool,
+    select: int
+):
+    out = []
+    attention_maps = attention_store.get_attention(mask=True)
+    num_pixels = res ** 2
+    for location in from_where:
+        for item in attention_maps[f"{location}_{'cross' if is_cross else 'self'}"]:
+            if item.shape[1] == num_pixels:
+                cross_maps = item.reshape(len(prompts), -1, res, res, item.shape[-1])[select]
+                out.append(cross_maps)
+    out = torch.cat(out, dim=0)
+    return out.cpu()
+
+
 def show_cross_attention(
     tokenizer,
     prompts: List[str],
@@ -108,6 +128,8 @@ def bbox_inference(
 
     # Get Object Positions
     object_positions = phrase2idx(prompt, phrases)
+    if len(object_positions) == 1:
+        controller.set_obj_tokens(object_positions[0])
 
     # Encode Classifier Embeddings
     uncond_input = model.tokenizer(
@@ -120,12 +142,12 @@ def bbox_inference(
 
     # Encode Prompt
     input_ids = model.tokenizer(
-            [prompt],
-            padding="max_length",
-            truncation=True,
-            max_length=model.tokenizer.model_max_length,
-            return_tensors="pt",
-        )
+        [prompt],
+        padding="max_length",
+        truncation=True,
+        max_length=model.tokenizer.model_max_length,
+        return_tensors="pt",
+    )
 
     cond_embeddings = model.text_encoder(input_ids.input_ids.to(model.device))[0]
     text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
@@ -192,7 +214,7 @@ def per_box_image(
     background_prompt,  
     bbox,
     from_where=["up", "mid"],
-    mask_method="threshold",
+    mask_method=None,
     height=512,
     width=512,
     timesteps=50,
@@ -204,7 +226,13 @@ def per_box_image(
     prompt = background_prompt + " with " + box_prompt
     phrase = "with " + box_prompt
 
-    controller = AttentionStore(down_res=16, mid_res=8, up_res=16, sum_blocks=(False, False))
+    controller = AttentionStore(
+        down_res=16,
+        mid_res=8,
+        up_res=16, 
+        img_res=512,
+        sum_blocks=(False, False),
+        bbox=bbox[0])
 
     pil_images = bbox_inference(
         model=model,
@@ -246,7 +274,7 @@ def per_box_image(
         threshold = xattn_hist.bin_edges[threshold_bin]
         latent_mask = torch.where(xattn_mask > threshold, 1., 0.)
     else:
-        raise NotImplementedError
+        latent_mask = xattn_mask
     
     if show_xattn:
         show_cross_attention(

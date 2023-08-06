@@ -7,24 +7,25 @@
 import abc
 import math
 import torch
-from typing import Tuple, Dict, List
+import numpy as np
+from typing import Tuple, Dict, List, Optional
 
 
 LOW_RESOURCE = False
 
 
 class AttentionControl(abc.ABC):
-    
+
     def step_callback(self, x_t):
         return x_t
-    
+
     def between_steps(self):
         return
-    
+
     @property
     def num_uncond_att_layers(self):
         return self.num_att_layers if LOW_RESOURCE else 0
-    
+
     @abc.abstractmethod
     def forward (self, attn, is_cross: bool, place_in_unet: str):
         raise NotImplementedError
@@ -42,7 +43,7 @@ class AttentionControl(abc.ABC):
             self.cur_step += 1
             self.between_steps()
         return attn
-    
+
     def reset(self):
         self.cur_step = 0
         self.cur_att_layer = 0
@@ -51,14 +52,14 @@ class AttentionControl(abc.ABC):
         self.cur_step = 0
         self.num_att_layers = -1
         self.cur_att_layer = 0
-        
+
 
 class EmptyControl(AttentionControl):
-    
+
     def forward (self, attn, is_cross: bool, place_in_unet: str):
         return attn
-    
-    
+
+
 class AttentionStore(AttentionControl):
 
     @staticmethod
@@ -69,9 +70,32 @@ class AttentionStore(AttentionControl):
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
         if attn.shape[1] == self.block_res[place_in_unet] ** 2:
+            # "Attenuate" attention regions around bbox to object relevant tokens
+            if self.bbox is not None:
+                for obj_tok_pos in self.obj_tokens:
+                    b, i, _ = attn.shape
+                    H = W = int(math.sqrt(i))
+
+                    # Create a mask for box in attn space
+                    attn_bbox = np.rint(self.bbox * self.block_res[place_in_unet]).astype(np.int32)
+                    tok_attn = attn[:,:,obj_tok_pos].reshape(b, H, W)
+                    box_mask = torch.zeros((1, H, W), device=tok_attn.device)
+                    box_mask[:, attn_bbox[1]:attn_bbox[3], attn_bbox[0]:attn_bbox[2]] = 1.0
+
+                    # Reduce attention probs surrounding box by some factor
+                    tok_attn = tok_attn * box_mask + (tok_attn * (1 - box_mask) * 0.05) 
+                    attn[:,:,obj_tok_pos] = tok_attn.reshape(b, i)
             self.step_store[key].append(attn)
         return attn
-     
+    
+    def convert_bbox(self, bbox: List[float]):
+        if max(bbox) > 1:
+            bbox = [val / self.img_res for val in bbox]
+        return np.array(bbox)
+    
+    def set_obj_tokens(self, obj_tokens):
+        self.obj_tokens = obj_tokens
+
     def set_to_mask(self, masking):
         self.mask = masking
 
@@ -128,7 +152,15 @@ class AttentionStore(AttentionControl):
         if mask:
             self.mask_attention_store = {}
 
-    def __init__(self, down_res: int = 16, mid_res: int = 8, up_res: int = 16, sum_blocks: Tuple[bool, bool] = (True, True)):
+    def __init__(
+        self,
+        down_res: int = 16,
+        mid_res: int = 8,
+        up_res: int = 16,
+        img_res: int = 512,
+        sum_blocks: Tuple[bool, bool] = (True, True),
+        bbox: Optional[List[float]] = None
+    ):
         super(AttentionStore, self).__init__()
         self.step_store = self.get_empty_store()
         self.attention_store = {}
@@ -137,6 +169,9 @@ class AttentionStore(AttentionControl):
         self.sum_blocks = sum_blocks # Whether to sum or concat attentions for: (attention_store, mask_attention_store)
 
         self.block_res = {"down": down_res, "mid": mid_res, "up": up_res}
+        self.img_res = img_res
+        self.bbox = self.convert_bbox(bbox) if bbox is not None else bbox
+        self.obj_tokens = []
 
 
 def compute_ca_loss(
