@@ -52,12 +52,12 @@ python finetune.py \
 - [x] Compose Masked Latents w/ Background Latent
 - [x] Pipeline these steps
 
-Next:
-- LLM for example generation
-- Improve per-box image generation -> more consistency
-- Refine masking method
-- Better compositional generation strategy?
-- Larger SD model?
+Roadmap:
+- [ ] LLM for example generation
+- [ ] Improve per-box image generation -> more consistency
+- [ ] Refine masking method
+- [ ] Better compositional generation strategy?
+- [ ] Larger SD model?
 
 
 ## Acknowledgements
