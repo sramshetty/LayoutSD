@@ -83,7 +83,7 @@ class AttentionStore(AttentionControl):
                     box_mask[:, attn_bbox[1]:attn_bbox[3], attn_bbox[0]:attn_bbox[2]] = 1.0
 
                     # Reduce attention probs surrounding box by some factor
-                    tok_attn = tok_attn * box_mask + (tok_attn * (1 - box_mask) * 0.05) 
+                    tok_attn = tok_attn * box_mask + (tok_attn * (1 - box_mask) * 0.01) 
                     attn[:,:,obj_tok_pos] = tok_attn.reshape(b, i)
             self.step_store[key].append(attn)
         return attn

@@ -2,6 +2,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torchvision.transforms.functional import pil_to_tensor
 from typing import List, Union
 from tqdm.notebook import tqdm
 
@@ -81,6 +82,7 @@ def get_attention(
                 cross_maps = item.reshape(len(prompts), -1, res, res, item.shape[-1])[select]
                 out.append(cross_maps)
     out = torch.cat(out, dim=0)
+    out = out.sum(0) / out.shape[0]
     return out.cpu()
 
 
@@ -129,7 +131,8 @@ def bbox_inference(
     # Get Object Positions
     object_positions = phrase2idx(prompt, phrases)
     if len(object_positions) == 1:
-        controller.set_obj_tokens(object_positions[0])
+        # Also mask the [EOT] token
+        controller.set_obj_tokens(object_positions[0] + [object_positions[0][-1] + 1])
 
     # Encode Classifier Embeddings
     uncond_input = model.tokenizer(
@@ -214,7 +217,7 @@ def per_box_image(
     background_prompt,  
     bbox,
     from_where=["up", "mid"],
-    mask_method=None,
+    mask_method="threshold",
     height=512,
     width=512,
     timesteps=50,
@@ -262,19 +265,18 @@ def per_box_image(
     )
     xattn_map = attention_maps[:, :, obj_idx]
 
-    xattn_mask = F.interpolate(
-        xattn_map.view(1, 1, xattn_map.size(0), xattn_map.size(1)),
-        (height // 8, width // 8),
-        mode='bicubic'
-    )
+    xattn_map = 255 * xattn_map / xattn_map.max()
+    xattn_map = xattn_map.repeat(1, 1, 3)
+    xattn_map = Image.fromarray(xattn_map.numpy().astype(np.uint8)).resize((height // 8, width // 8))
+    latent_mask = pil_to_tensor(xattn_map)[0].type(torch.float32)
 
     if mask_method == "threshold":
-        xattn_hist = torch.histogram(xattn_mask.flatten(), 100)
-        threshold_bin = torch.where((xattn_hist.hist.cumsum(0) / xattn_mask.numel()) > 0.95)[0][0]
+        xattn_hist = torch.histogram(latent_mask.flatten(), 100)
+        threshold_bin = torch.where((xattn_hist.hist.cumsum(0) / latent_mask.numel()) > 0.85)[0][0]
         threshold = xattn_hist.bin_edges[threshold_bin]
-        latent_mask = torch.where(xattn_mask > threshold, 1., 0.)
+        latent_mask = torch.where(latent_mask > threshold, 1., 0.)
     else:
-        latent_mask = xattn_mask
+        raise NotImplementedError
     
     if show_xattn:
         show_cross_attention(
@@ -285,7 +287,7 @@ def per_box_image(
             from_where=('up', 'down')
         )
     
-    return pil_images[0], latent_mask
+    return pil_images[0], latent_mask.view(1, 1, latent_mask.size(0), latent_mask.size(1))
 
 
 @torch.no_grad()
