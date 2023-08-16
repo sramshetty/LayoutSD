@@ -16,7 +16,7 @@ import supervision as sv
 from groundingdino.util.inference import load_model, load_image, predict, box_convert
 import groundingdino.datasets.transforms as T
 
-from data import get_data
+from .datasets import get_data
 
 
 def get_args_parser():
