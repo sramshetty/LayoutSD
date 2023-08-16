@@ -221,12 +221,12 @@ def get_dataset_fn(dataset_type, args, image_processor, tokenizer, epoch=0):
     if dataset_type == "generation_wds":
         return get_image_data(args, image_processor, epoch)
     elif dataset_type == "dino_texts":
-        return get_dino_data(args, tokenizer)
+        return get_dino_data(args, tokenizer)                                   
     elif dataset_type == "narrative_wds":
         return get_narratives_data(args, tokenizer, epoch)
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
 
-def get_data(args, image_processor=None, tokenizer=None, dataset_type="generation_wds", epoch=0):
-    return get_dataset_fn(dataset_type, args, image_processor, tokenizer, epoch)
+def get_data(args, image_processor=None, tokenizer=None, epoch=0):
+    return get_dataset_fn(args.dataset_type, args, image_processor, tokenizer, epoch)

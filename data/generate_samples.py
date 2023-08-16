@@ -16,7 +16,7 @@ import supervision as sv
 from groundingdino.util.inference import load_model, load_image, predict, box_convert
 import groundingdino.datasets.transforms as T
 
-from .datasets import get_data
+from datasets import get_data
 
 
 def get_args_parser():
@@ -144,10 +144,11 @@ if __name__ == "__main__":
     )
     clip_model.to(device)
 
-    print("Generating caption for each image...")
     if args.shards is not None:
-        # Important to avoid shuffling the data here since we split processing into two parts
+        args.dataset_type = "generation_wds"
         dataset = get_data(args, transform)
+        
+    print("Generating caption for each image...")
     captions_df = generate_caption(args, clip_model, transform, dataset)
     del clip_model
     
