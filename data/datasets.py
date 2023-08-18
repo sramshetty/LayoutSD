@@ -3,7 +3,7 @@ from ast import literal_eval
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from wds_utils import *
+from .wds_utils import *
 
 
 _SHARD_SHUFFLE_SIZE = 2000
