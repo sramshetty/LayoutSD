@@ -85,8 +85,8 @@ def preprocess_text(sample):
     caption, bboxes = sample
     bboxes = [literal_eval(bbox) for bbox in bboxes]
 
-    bbox_str = str([(phrase, (np.array(literal_eval(box)) / 512).round(2).tolist()) for phrase, box in bboxes])
-    return (sample, "Caption: " + caption + "\nObjects: " + bbox_str)
+    bbox_str = str([(phrase, (np.array(literal_eval(box))).round(2).tolist()) for phrase, box in bboxes])
+    return (sample, "Caption: " + caption.strip() + "\nObjects: " + bbox_str.strip() + "\n")
 
 
 def get_image_data(args, image_processor, epoch=0, floor=False):
@@ -129,7 +129,7 @@ def get_image_data(args, image_processor, epoch=0, floor=False):
     ), "number of shards must be >= total workers"
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
-    num_batches = round_fn(num_samples / args.batch_size)
+    num_batches = round_fn(args.num_samples / args.batch_size)
     num_workers = max(1, args.workers)
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
@@ -161,7 +161,7 @@ def get_narratives_data(
     shared_epoch = SharedEpoch(epoch=epoch)
 
     dataset = wds.DataPipeline(
-        wds.SimpleShardList(braceexpand(args.captions)),
+        wds.SimpleShardList(braceexpand.braceexpand(args.captions)),
         detshuffle2(
             bufsize=_SHARD_SHUFFLE_SIZE,
             initial=_SHARD_SHUFFLE_INITIAL,
@@ -181,7 +181,7 @@ def get_narratives_data(
     )
 
     def collate_fn(batch):
-        targets = tokenizer(
+        tokens = tokenizer(
             batch[1],
             padding="max_length",
             truncation=True,
@@ -190,12 +190,12 @@ def get_narratives_data(
             return_attention_mask=True
         )
 
-        return targets
+        return tokens["input_ids"], tokens["attention_mask"]
 
 
     round_fn = math.floor if floor else math.ceil
     global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(num_samples / global_batch_size)
+    num_batches = round_fn(args.num_samples / global_batch_size)
     num_workers = max(1, args.workers)
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
@@ -212,7 +212,8 @@ def get_narratives_data(
         persistent_workers=True,
     )
 
-    dataloader.num_samples = args.num_samples
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = num_batches
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
