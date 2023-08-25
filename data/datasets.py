@@ -75,18 +75,35 @@ def samples_from_parquet(data):
             for i in range(len(df)):
                 # Split caption and narrative into different samples
                 for text_name, boxes_name in [('caption', 'caption_boxes'), ('narrative', 'narrative_boxes')]:
+                    
+                    filtered_bboxes = []
+                    for phrase, bbox in [literal_eval(bbox) for bbox in df[boxes_name][i]]:
+                        bbox = (np.array(literal_eval(bbox))).tolist()
+                        # bbox should be less than 400 pixels and more than 20 pixels in either dimension
+                        if (abs(bbox[2] - bbox[0]) > 400) or (abs(bbox[2] - bbox[0]) < 50) or (abs(bbox[3] - bbox[1]) > 400) or (abs(bbox[3] - bbox[1]) < 50):
+                            continue
+
+                        # if coordinates are flipped, correct them as to avoid throwing away a sample
+                        if bbox[2] - bbox[0] < 0:
+                            bbox[0], bbox[2] = bbox[2], bbox[0]
+                        if bbox[3] - bbox[1] < 0:
+                            bbox[1], bbox[3] = bbox[3], bbox[1]
+
+                        filtered_bboxes.append((phrase, bbox))
+
+                    if len(filtered_bboxes) == 0:
+                        continue
+
                     yield (
                         df[text_name][i],
-                        df[boxes_name][i],
+                        filtered_bboxes,
                     )
 
 
 def preprocess_text(sample):
     caption, bboxes = sample
-    bboxes = [literal_eval(bbox) for bbox in bboxes]
-
-    bbox_str = str([(phrase, (np.array(literal_eval(box))).round(2).tolist()) for phrase, box in bboxes])
-    return (sample, "Caption: " + caption.strip() + "\nObjects: " + bbox_str.strip() + "\n")
+    bbox_str = str([(phrase, bbox) for phrase, bbox in bboxes])
+    return (sample, "Caption: " + caption.strip() + "\nObjects: " + bbox_str.strip())
 
 
 def get_image_data(args, image_processor, epoch=0, floor=False):
@@ -170,8 +187,8 @@ def get_narratives_data(
         ),
         wds.split_by_worker,
         tarfile_to_samples_nothrow,
-    ).compose(
         samples_from_parquet,
+    ).compose(
         wds.map(preprocess_text),
         wds.shuffle(
             bufsize=_SAMPLE_SHUFFLE_SIZE,
