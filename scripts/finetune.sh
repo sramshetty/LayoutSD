@@ -2,7 +2,7 @@
 #SBATCH --partition=g40x
 #SBATCH --job-name=LayoutSD
 #SBATCH --account=laion
-#SBATCH --nodes 1
+#SBATCH --nodes 4
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-gpu=8
@@ -44,13 +44,13 @@ srun --cpu_bind=v --accel-bind=gn --comment laion python /fsx/home-shivr/LayoutS
     --model ${LANG_MODEL} \
     --fsdp \
     --num_samples 1000000 \
-    --batch_size 4 \
+    --batch_size 2 \
     --workers 8 \
     --lr 0.00001 \
     --lr_schedule cosine \
     --decay 0.1 \
     --epochs 10 \
-    --warmup 10000 \
+    --warmup 5000 \
     --logging_interval 500 \
     --run_name ${RUN_NAME} \
     --delete_previous_checkpoint || sbatch /fsx/home-shivr/LayoutSD/scripts/finetune.sh
