@@ -2,7 +2,6 @@
 Adapted from https://github.com/mlfoundations/open_flamingo/blob/main/open_flamingo/train/train.py
 """
 
-
 import argparse
 from contextlib import suppress
 import glob
@@ -42,6 +41,7 @@ from transformers.optimization import (
     get_linear_schedule_with_warmup,
     get_cosine_schedule_with_warmup
 )
+from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
 import wandb
 
 from data.datasets import get_data
@@ -55,11 +55,17 @@ def get_args_parser():
     parser.add_argument("--dataset_type", type=str, choices=["dino_texts", "narrative_wds"])
 
     parser.add_argument("--model", default="gpt2-large", type=str)
+    parser.add_argument("--freeze_lm_embeddings", action="store_true")
     parser.add_argument(
         "--precision",
         choices=["amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
         default="fp32",
         help="Floating point precision.",
+    )
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        help="whether to use lora; will use fp32"
     )
     parser.add_argument("--offline", action="store_true")
 
@@ -249,7 +255,7 @@ def train_epoch(
         # Log loss to console
         if ((num_steps + 1) % args.logging_interval == 0) and args.rank == 0:
             print(
-                f"Step {num_steps+1}/{num_batches} of epoch {epoch+1}/{args.num_epochs} complete. Loss: {loss.item():.3f}"
+                f"Step {num_steps+1}/{num_batches} of epoch {epoch+1}/{args.epochs} complete. Loss: {loss.item():.3f}"
             )
 
 
@@ -268,6 +274,9 @@ def train(args):
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
     )
+
+    if args.freeze_lm_embeddings:
+        model.get_input_embeddings().requires_grad_(True)
 
     print(f"Start running training on rank {args.rank}.")
     if args.rank == 0 and args.report_to_wandb:
@@ -305,6 +314,20 @@ def train(args):
         # for fsdp, only one rank needs to load the state dict
         if not args.fsdp or args.rank == 0:
             model.load_state_dict(msd, False)
+
+    if args.lora:
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=8,
+            lora_alpha=32,
+            lora_dropout=0.1,
+            fan_in_fan_out=True   
+        )
+
+        model = get_peft_config(model, lora_config)
+
+        print("Trainable parameters using Lora:")
+        model.print_trainable_parameters()
 
     # Initialize FSDP / DDP, and ensure the model is on GPU
     print(f"Initializing distributed training with {args.world_size} GPUs.")
@@ -446,8 +469,8 @@ def train(args):
         )
 
         save_checkpoint(ddp_model, optimizer, scheduler, epoch, args)
-    
-    save_checkpoint(ddp_model, optimizer, scheduler, epoch, args)
+
+    save_checkpoint(ddp_model, optimizer, scheduler, args.epochs - 1, args)
 
 
 if __name__ == "__main__":
@@ -467,6 +490,11 @@ if __name__ == "__main__":
             + "Copy and paste the code from the _optim_utils.py in this repo into the torch file."
             + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state."
         )
+
+    if args.lora and not args.model.startswith("gpt2"):
+        raise ValueError("currently limiting lora experiments to gpt2 models")
+    if args.lora and args.fsdp:
+        raise ValueError("fsdp will likely require manual layer wrapping: https://github.com/pytorch/pytorch/issues/91165")
 
     print("Training...")
     train(args)
