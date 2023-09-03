@@ -41,7 +41,7 @@ from transformers.optimization import (
     get_linear_schedule_with_warmup,
     get_cosine_schedule_with_warmup
 )
-from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig, TaskType, set_peft_model_state_dict
 import wandb
 
 from data.datasets import get_data
@@ -292,6 +292,7 @@ def train(args):
         # if args do not specify a checkpoint to resume from, check if checkpoints exist for this run
         # and automatically resume from the latest checkpoint
         checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+
         if len(checkpoint_list) == 0:
             print(f"Found no checkpoints for run {args.run_name}.")
         else:
@@ -301,30 +302,49 @@ def train(args):
             print(
                 f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
             )
+        
+        if args.lora:
+            adapter_list = glob.glob(f"{args.run_name}/adapter_checkpoint_*/adapter_model.bin")
+
+            if len(adapter_list) == 0:
+                print(f"Found no adapter checkpoints for run {args.run_name}.")
+            else:
+                args.resume_from_adapter = sorted(
+                    adapter_list, key=lambda x: int(x.split("_")[-2].split("/")[0])
+                )[-1]
+                print(
+                    f"Found adapter checkpoint {args.resume_from_adapter} for run {args.run_name}."
+                )
 
     resume_from_epoch = 0
     if args.resume_from_checkpoint is not None:
         if args.rank == 0:
             print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
-        msd = checkpoint["model_state_dict"]
-        msd = {k.replace("module.", ""): v for k, v in msd.items()}
         resume_from_epoch = checkpoint["epoch"] + 1
+        
+        if not args.lora:
+            msd = checkpoint["model_state_dict"]
+            msd = {k.replace("module.", ""): v for k, v in msd.items()}
 
-        # for fsdp, only one rank needs to load the state dict
-        if not args.fsdp or args.rank == 0:
-            model.load_state_dict(msd, False)
+            # for fsdp, only one rank needs to load the state dict
+            if not args.fsdp or args.rank == 0:
+                model.load_state_dict(msd, False)
 
     if args.lora:
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=8,
+            r=16,
             lora_alpha=32,
-            lora_dropout=0.1,
-            fan_in_fan_out=True   
+            lora_dropout=0.05,
+            fan_in_fan_out=True,   
         )
 
-        model = get_peft_config(model, lora_config)
+        model = get_peft_model(model, lora_config)
+
+        if "resume_from_adapter" not in args.resume_from_adapter:
+            adapters_weights = torch.load(args.resume_from_adapter)
+            set_peft_model_state_dict(model, adapters_weights)
 
         print("Trainable parameters using Lora:")
         model.print_trainable_parameters()
@@ -359,25 +379,25 @@ def train(args):
             process_group = None  # for FSDP init
 
         # init FSDP
-        wrapper_kwargs = dict(
-            process_group=process_group,
-            cpu_offload=CPUOffload(offload_params=False),
-            device_id=device_id,
-            sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
-            sharding_strategy=ShardingStrategy.FULL_SHARD
-            if args.fsdp_sharding_strategy == "full"
-            else ShardingStrategy.HYBRID_SHARD,
-            use_orig_params=False,
-            mixed_precision=mp_policy,
-            forward_prefetch=True,
-            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-            limit_all_gathers=True,
-        )
-        # model.wrap_fsdp(wrapper_kwargs, device_id)
-        auto_wrap_policy = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=20000
-        )
-        model = model.to(device_id)
+        # wrapper_kwargs = dict(
+        #     process_group=process_group,
+        #     cpu_offload=CPUOffload(offload_params=False),
+        #     device_id=device_id,
+        #     sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
+        #     sharding_strategy=ShardingStrategy.FULL_SHARD
+        #     if args.fsdp_sharding_strategy == "full"
+        #     else ShardingStrategy.HYBRID_SHARD,
+        #     use_orig_params=False,
+        #     mixed_precision=mp_policy,
+        #     forward_prefetch=True,
+        #     backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+        #     limit_all_gathers=True,
+        # )
+        # # model.wrap_fsdp(wrapper_kwargs, device_id)
+        # auto_wrap_policy = functools.partial(
+        #     size_based_auto_wrap_policy, min_num_params=20000
+        # )
+        # model = model.to(device_id)
         ddp_model = FSDP(
             model,
             process_group=process_group,

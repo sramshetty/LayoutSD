@@ -1,8 +1,11 @@
 """
 Credit: https://github.com/mlfoundations/open_flamingo/blob/main/open_flamingo/train/train_utils.py
 """
-
+import os
 from contextlib import suppress
+import shutil
+import warnings
+
 import torch
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import (
@@ -10,7 +13,6 @@ from torch.distributed.fsdp import (
     StateDictType,
 )
 from torch.distributed.fsdp.api import FullOptimStateDictConfig
-import os
 import wandb
 
 
@@ -133,10 +135,23 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
         }
 
         print(f"Saving checkpoint to {args.run_name}/checkpoint_{epoch}.pt")
+        if args.lora:
+            # saving peft model will just save adapter weights 
+            print(f"Saving lora checkpoint to {args.run_name}/adapter_checkpoint_{epoch}/")
+            model.module.save_pretrained(f"{args.run_name}/adapter_checkpoint_{epoch}/")
+
+            # Don't need to save model's state for lora
+            del checkpoint_dict["model_state_dict"]
+
         torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
         if args.report_to_wandb and args.save_checkpoints_to_wandb:
             wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
 
         if args.delete_previous_checkpoint:
             if epoch > 0:
-                os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
+                try:
+                    if args.lora:
+                        shutil.rmtree(f"{args.run_name}/adapter_checkpoint_{epoch-1}/", ignore_errors=True)
+                    os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
+                except FileNotFoundError:
+                    warnings.warn(f"Unable to delete checkpoint for epoch {epoch-1}")
