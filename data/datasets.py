@@ -2,6 +2,7 @@ from ast import literal_eval
 
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torchvision.ops import box_iou
 
 from .wds_utils import *
 
@@ -79,8 +80,8 @@ def samples_from_parquet(data):
                     filtered_bboxes = []
                     for phrase, bbox in [literal_eval(bbox) for bbox in df[boxes_name][i]]:
                         bbox = (np.array(literal_eval(bbox))).tolist()
-                        # bbox should be less than 400 pixels and more than 20 pixels in either dimension
-                        if (abs(bbox[2] - bbox[0]) > 400) or (abs(bbox[2] - bbox[0]) < 50) or (abs(bbox[3] - bbox[1]) > 400) or (abs(bbox[3] - bbox[1]) < 50):
+                        # bbox should be less than 450 pixels and more than 20 pixels in either dimension
+                        if (abs(bbox[2] - bbox[0]) > 450) or (abs(bbox[2] - bbox[0]) < 20) or (abs(bbox[3] - bbox[1]) > 450) or (abs(bbox[3] - bbox[1]) < 20):
                             continue
 
                         # if coordinates are flipped, correct them as to avoid throwing away a sample
@@ -93,6 +94,18 @@ def samples_from_parquet(data):
 
                     if len(filtered_bboxes) == 0:
                         continue
+                    else:
+                        # avoid having boxes that overlap too much
+                        tensor_boxes = torch.Tensor([box for _, box in filtered_bboxes])
+                        ious = box_iou(tensor_boxes, tensor_boxes)
+                        
+                        # iterate over bottom triangle to adjust boxes with too much overlap
+                        duplicate_ids = set()
+                        for r in range(len(filtered_bboxes)):
+                            for c in range(r):
+                                if ious[r][c] > 0.33:
+                                    duplicate_ids.add(c)
+                        filtered_bboxes = [fbox for idx, fbox in enumerate(filtered_bboxes) if idx not in duplicate_ids]
 
                     yield (
                         df[text_name][i],
@@ -187,8 +200,8 @@ def get_narratives_data(
         ),
         wds.split_by_worker,
         tarfile_to_samples_nothrow,
-        samples_from_parquet,
     ).compose(
+        samples_from_parquet,
         wds.map(preprocess_text),
         wds.shuffle(
             bufsize=_SAMPLE_SHUFFLE_SIZE,
