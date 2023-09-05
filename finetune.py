@@ -342,7 +342,7 @@ def train(args):
 
         model = get_peft_model(model, lora_config)
 
-        if "resume_from_adapter" not in args.resume_from_adapter:
+        if hasattr(args, "resume_from_adapter"):
             adapters_weights = torch.load(args.resume_from_adapter)
             set_peft_model_state_dict(model, adapters_weights)
 
