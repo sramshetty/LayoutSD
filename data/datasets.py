@@ -28,8 +28,10 @@ class DinoGeneratedDataset(Dataset):
         return "Caption: " + self.captions[idx] + "\nObjects: " + bbox_str
 
 
-def get_dino_data(args, tokenizer):
+def get_dino_data(args, tokenizer, epoch):
     dataset = DinoGeneratedDataset(args.captions)
+
+    shared_epoch = SharedEpoch(epoch=epoch)
 
     def collate_fn(batch):
         targets = tokenizer(
@@ -54,7 +56,7 @@ def get_dino_data(args, tokenizer):
 
     dataloader.num_samples = args.num_samples
 
-    return DataInfo(dataloader=dataloader)
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 MIN_KB = 10
@@ -103,7 +105,7 @@ def samples_from_parquet(data):
                         duplicate_ids = set()
                         for r in range(len(filtered_bboxes)):
                             for c in range(r):
-                                if ious[r][c] > 0.33:
+                                if ious[r][c] > 0.50:
                                     duplicate_ids.add(c)
                         filtered_bboxes = [fbox for idx, fbox in enumerate(filtered_bboxes) if idx not in duplicate_ids]
 
@@ -134,6 +136,8 @@ def get_image_data(args, image_processor, epoch=0, floor=False):
             )
 
     # create a shared epoch store to sync epoch to dataloader worker proc
+    shared_epoch = SharedEpoch(epoch=epoch)
+
     pipeline = [wds.SimpleShardList(input_shards)]
 
     # create preprocess function that take in the passed in image_processor
@@ -157,13 +161,15 @@ def get_image_data(args, image_processor, epoch=0, floor=False):
     assert (
         num_shards >= args.workers
     ), "number of shards must be >= total workers"
+
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
-    num_batches = round_fn(args.num_samples / args.batch_size)
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(args.num_samples / global_batch_size)
     num_workers = max(1, args.workers)
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
-    num_samples = num_batches * args.batch_size
+    num_samples = num_batches * global_batch_size
     # each worker is iterating over this
     dataset = dataset.with_epoch(num_worker_batches)
 
@@ -176,10 +182,10 @@ def get_image_data(args, image_processor, epoch=0, floor=False):
     )
 
     # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
+    dataloader.num_batches = num_batches
 
-    return DataInfo(dataloader=dataloader)
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 def get_narratives_data(
@@ -252,7 +258,7 @@ def get_dataset_fn(dataset_type, args, image_processor, tokenizer, epoch=0):
     if dataset_type == "generation_wds":
         return get_image_data(args, image_processor, epoch)
     elif dataset_type == "dino_texts":
-        return get_dino_data(args, tokenizer)                                   
+        return get_dino_data(args, tokenizer, epoch)                                   
     elif dataset_type == "narrative_wds":
         return get_narratives_data(args, tokenizer, epoch)
     else:
