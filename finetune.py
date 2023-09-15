@@ -75,7 +75,6 @@ def get_args_parser():
     parser.add_argument("--supp_num_samples", default=0, type=int)
     parser.add_argument("--batch_size", default=1, type=int)
     parser.add_argument("--supp_batch_size", default=1, type=int)
-    parser.add_argument("--shuffle", action="store_true")
     parser.add_argument("--resampled", action="store_true")
     parser.add_argument("--workers", default=6, type=int)
     parser.add_argument("--seed", default=42, type=int)
@@ -312,11 +311,10 @@ def train_epoch(
         # Log loss to console
         if ((num_steps + 1) % args.logging_interval == 0) and args.rank == 0:
             print(
-                f"""Step {num_steps+1}/{num_batches} of epoch {epoch+1}/{args.epochs} complete.
-                Loss: {loss.item():.3f}
-                Support Loss: {supp_loss.item():.3f}
-                """
+                f"Step {num_steps+1}/{num_batches} of epoch {epoch+1}/{args.epochs} complete.\nLoss: {loss.item():.3f}"
             )
+            if supp_batch is not None:
+                print(f"Support Loss: {supp_loss.item():.3f}")
 
 
 def train(args):
@@ -588,3 +586,4 @@ if __name__ == "__main__":
     train(args)
 
     print("Done!")
+

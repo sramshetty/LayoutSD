@@ -2,7 +2,7 @@
 #SBATCH --partition=g40x
 #SBATCH --job-name=LayoutSD
 #SBATCH --account=laion
-#SBATCH --nodes 2
+#SBATCH --nodes 4
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-gpu=8
@@ -39,17 +39,22 @@ LANG_MODEL=gpt2-xl
 source /fsx/home-shivr/layoutsd_venv/bin/activate
 
 srun --cpu_bind=v --accel-bind=gn --comment laion python /fsx/home-shivr/LayoutSD/finetune.py \
-    --captions "pipe:aws s3 cp s3://laion-west/flickr-narrative-boxes/output_wds/{00000..01392..2}.tar -" \
+    --data_path "pipe:aws s3 cp s3://laion-west/flickr-narrative-boxes/output_wds/{00000..01392..2}.tar -" \
+    --supp_data_path "pipe:aws s3 cp s3://laion-west/GRIT/wds_no_imgs/coyo_{0..20}_snappy.tar -" \
     --dataset_type narrative_wds \
+    --supp_dataset_type grit \
+    --num_samples 25000 \
+    --supp_num_samples 100000 \
+    --batch_size 2 \
+    --supp_batch_size 8 \
+    --resampled \
     --model ${LANG_MODEL} \
     --lora \
-    --num_samples 1000000 \
-    --batch_size 16 \
     --workers 8 \
-    --lr 0.00001 \
+    --lr 5e-6 \
     --lr_schedule cosine \
     --decay 0.1 \
-    --epochs 10 \
+    --epochs 100 \
     --warmup 5000 \
     --logging_interval 500 \
     --run_name ${RUN_NAME} \
