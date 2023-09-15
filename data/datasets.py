@@ -29,7 +29,7 @@ class DinoGeneratedDataset(Dataset):
 
 
 def get_dino_data(args, tokenizer, epoch):
-    dataset = DinoGeneratedDataset(args.captions)
+    dataset = DinoGeneratedDataset(args.data_path)
 
     shared_epoch = SharedEpoch(epoch=epoch)
 
@@ -71,7 +71,7 @@ def preprocess_image(sample, image_processor):
     return image
 
 
-def samples_from_parquet(data):
+def samples_from_narratives(data):
     for sample in data:
         if "parquet" in sample:
             df = pd.read_parquet(io.BytesIO(sample['parquet']))
@@ -112,13 +112,35 @@ def samples_from_parquet(data):
                     yield (
                         df[text_name][i],
                         filtered_bboxes,
+                        512,
+                        512
                     )
 
 
+def samples_from_grit(data):
+    for sample in data:
+        if "parquet" in sample:
+            df = pd.read_parquet(io.BytesIO(sample['parquet']))
+            for caption, width, height, chunks in zip(df['caption'], df['width'], df['height'], df['noun_chunks']):
+                filtered_bboxes = []
+
+                for (start, end, x_min, y_min, x_max, y_max, _) in chunks:
+                    phrase = caption[start:end]
+                    bbox = list(np.around(np.array([x_min, y_min, x_max, y_max]), 2))
+                    filtered_bboxes.append((phrase, bbox))
+
+                yield (
+                    caption,
+                    filtered_bboxes,
+                    width,
+                    height
+                )
+
+
 def preprocess_text(sample):
-    caption, bboxes = sample
+    caption, bboxes, width, height = sample
     bbox_str = str([(phrase, bbox) for phrase, bbox in bboxes])
-    return (sample, "Caption: " + caption.strip() + "\nObjects: " + bbox_str.strip())
+    return (sample, f"Caption: {caption.strip()}\nSize: {width}, {height}\nObjects: {bbox_str.strip()}")
 
 
 def get_image_data(args, image_processor, epoch=0, floor=False):
@@ -139,11 +161,6 @@ def get_image_data(args, image_processor, epoch=0, floor=False):
     shared_epoch = SharedEpoch(epoch=epoch)
 
     pipeline = [wds.SimpleShardList(input_shards)]
-
-    # create preprocess function that take in the passed in image_processor
-    # preprocess_image_fn = functools.partial(
-    #     preprocess_image, image_processor=image_processor
-    # )
 
     pipeline.extend(
         [
@@ -188,16 +205,34 @@ def get_image_data(args, image_processor, epoch=0, floor=False):
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_narratives_data(
+def get_wds_data(
     args,
     tokenizer,
     epoch=0,
-    floor=False
+    sampling_fn=samples_from_narratives,
+    floor=False,
+    support=False
 ):
+    data_path = args.supp_data_path if support else args.data_path
+    batch_size = args.supp_batch_size if support else args.batch_size
+    num_samples, num_shards = get_dataset_size(data_path)
+    num_samples = None
+    if not num_samples:
+        num_samples = args.supp_num_samples if support else args.num_samples
+        if not num_samples:
+            raise RuntimeError(
+                "Currently, number of dataset samples must be specified for training dataset. "
+                "Please specify via `--train-num-samples` if no dataset length info present."
+            )
+        
     shared_epoch = SharedEpoch(epoch=epoch)
+    if args.resampled:
+        shard_list = ResampledShards2(data_path, deterministic=True, epoch=shared_epoch)
+    else:
+        shard_list = wds.SimpleShardList(data_path)
 
     dataset = wds.DataPipeline(
-        wds.SimpleShardList(braceexpand.braceexpand(args.captions)),
+        shard_list,
         detshuffle2(
             bufsize=_SHARD_SHUFFLE_SIZE,
             initial=_SHARD_SHUFFLE_INITIAL,
@@ -207,13 +242,13 @@ def get_narratives_data(
         wds.split_by_worker,
         tarfile_to_samples_nothrow,
     ).compose(
-        samples_from_parquet,
+        sampling_fn,
         wds.map(preprocess_text),
         wds.shuffle(
             bufsize=_SAMPLE_SHUFFLE_SIZE,
             initial=_SAMPLE_SHUFFLE_INITIAL,
         ),
-        wds.batched(args.batch_size, partial=False)
+        wds.batched(batch_size, partial=False)
     )
 
     def collate_fn(batch):
@@ -228,10 +263,14 @@ def get_narratives_data(
 
         return tokens["input_ids"], tokens["attention_mask"]
 
+    if not args.resampled:
+        assert (
+            num_shards >= args.workers * args.world_size
+        ), "number of shards must be >= total workers"
 
     round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(args.num_samples / global_batch_size)
+    global_batch_size = batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
     num_workers = max(1, args.workers)
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
@@ -255,15 +294,20 @@ def get_narratives_data(
 
 
 def get_dataset_fn(dataset_type, args, image_processor, tokenizer, epoch=0):
+    support = args.supp_dataset_type == dataset_type and dataset_type is not None
     if dataset_type == "generation_wds":
         return get_image_data(args, image_processor, epoch)
     elif dataset_type == "dino_texts":
         return get_dino_data(args, tokenizer, epoch)                                   
     elif dataset_type == "narrative_wds":
-        return get_narratives_data(args, tokenizer, epoch)
+        return get_wds_data(args, tokenizer, epoch, sampling_fn=samples_from_narratives, support=support)
+    elif dataset_type == "grit":
+        return get_wds_data(args, tokenizer, epoch, sampling_fn=samples_from_grit, support=support)
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
 
-def get_data(args, image_processor=None, tokenizer=None, epoch=0):
-    return get_dataset_fn(args.dataset_type, args, image_processor, tokenizer, epoch)
+def get_data(args, image_processor=None, tokenizer=None, epoch=0, dataset_type=None):
+    if dataset_type is None:
+        return None
+    return get_dataset_fn(dataset_type, args, image_processor, tokenizer, epoch)

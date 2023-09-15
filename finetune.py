@@ -51,8 +51,10 @@ from finetune_utils import *
 
 def get_args_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--captions", type=str, help="path to parquet/s of generated samples")
-    parser.add_argument("--dataset_type", type=str, choices=["dino_texts", "narrative_wds"])
+    parser.add_argument("--data_path", type=str, help="path to parquet/s of generated samples")
+    parser.add_argument("--supp_data_path", type=str, help="path to parquet/s of generated samples")
+    parser.add_argument("--dataset_type", type=str, choices=["dino_texts", "narrative_wds", "grit"])
+    parser.add_argument("--supp_dataset_type", type=str, choices=["narrative_wds", "grit"])
 
     parser.add_argument("--model", default="gpt2-large", type=str)
     parser.add_argument("--freeze_lm_embeddings", action="store_true")
@@ -70,8 +72,11 @@ def get_args_parser():
     parser.add_argument("--offline", action="store_true")
 
     parser.add_argument("--num_samples", default=10000, type=int)
+    parser.add_argument("--supp_num_samples", default=0, type=int)
     parser.add_argument("--batch_size", default=1, type=int)
+    parser.add_argument("--supp_batch_size", default=1, type=int)
     parser.add_argument("--shuffle", action="store_true")
+    parser.add_argument("--resampled", action="store_true")
     parser.add_argument("--workers", default=6, type=int)
     parser.add_argument("--seed", default=42, type=int)
 
@@ -86,6 +91,8 @@ def get_args_parser():
     parser.add_argument("--decay", default=1e-3, type=float)
     parser.add_argument("--warmup", default=200, type=int)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--loss_multiplier", type=float, default=1.0)
+    parser.add_argument("--supp_loss_multiplier", type=float, default=1.0)
 
     parser.add_argument("--run_name", default=None, type=str)
     parser.add_argument("--logging_interval", default=100, type=int)
@@ -159,12 +166,20 @@ def train_epoch(
     model,
     epoch,
     dataloader,
+    supp_dataloader,
     optimizer,
     scheduler,
     device_id,
     wandb
 ):
     num_batches = dataloader.num_batches
+    if supp_dataloader is not None:
+        supp_num_batches = supp_dataloader.num_batches
+        assert (
+            num_batches == supp_num_batches
+        ), "Number of batches for each dataset should be equal"
+    else:
+        supp_dataloader = [None] * num_batches
 
     autocast = get_autocast(
         args.precision, cache_enabled=(not args.fsdp)
@@ -182,8 +197,8 @@ def train_epoch(
     )  # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
     end = time.time()
 
-    for num_steps, batch in tqdm(
-        enumerate(dataloader),
+    for num_steps, (batch, supp_batch) in tqdm(
+        enumerate(zip(dataloader, supp_dataloader)),
         disable=args.rank != 0,
         total=args.epochs * num_batches,
         initial=(epoch * num_batches),
@@ -203,7 +218,23 @@ def train_epoch(
             loss = outputs.loss
 
         divided_loss = loss / args.gradient_accumulation_steps
-        divided_loss.backward()
+        (divided_loss * args.loss_multiplier).backward()
+
+        # supporting dataset
+        if supp_batch is not None:
+            input_ids = supp_batch[0].to(device_id, dtype=cast_dtype, non_blocking=True)
+            attention_mask = supp_batch[1].to(device_id, dtype=cast_dtype, non_blocking=True)
+
+            with autocast():
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=input_ids,
+                )
+                supp_loss = outputs.loss
+
+            supp_divided_loss = supp_loss / args.gradient_accumulation_steps
+            (supp_divided_loss * args.supp_loss_multiplier).backward()
 
         # step optimizer and log
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
@@ -231,16 +262,42 @@ def train_epoch(
                     / step_time_m.val
                 )
 
-                wandb.log(
-                    {
-                        "data_time": data_time_m.avg,
-                        "step_time": step_time_m.avg,
-                        "samples_per_second": samples_per_second,
-                        "samples_per_second_per_gpu": samples_per_second_per_gpu,
-                        "lr": optimizer.param_groups[0]["lr"],
-                    },
-                    commit=False,
-                )
+                train_info = {
+                    "data_time": data_time_m.avg,
+                    "step_time": step_time_m.avg,
+                    "samples_per_second": samples_per_second,
+                    "samples_per_second_per_gpu": samples_per_second_per_gpu,
+                    "lr": optimizer.param_groups[0]["lr"],
+                }
+
+                if supp_batch is not None: 
+                    supp_samples_per_second = (
+                        args.gradient_accumulation_steps
+                        * args.supp_batch_size
+                        * args.world_size
+                        / step_time_m.val
+                    )
+                    supp_samples_per_second_per_gpu = (
+                        args.gradient_accumulation_steps
+                        * args.supp_batch_size
+                        / step_time_m.val
+                    )
+
+                    train_supp_info = {
+                        "support_samples_per_second": supp_samples_per_second,
+                        "support_samples_per_second_per_gpu": supp_samples_per_second_per_gpu, 
+                    }
+                    train_info.update(train_supp_info)
+
+                    wandb.log(
+                        {
+                            "supp_ce_loss": supp_divided_loss.item(),
+                            "supp_global_step": global_step
+                        },
+                        commit=False,
+                    )
+
+                wandb.log(train_info, commit=False)
                 step_time_m.reset()
                 data_time_m.reset()
 
@@ -255,7 +312,10 @@ def train_epoch(
         # Log loss to console
         if ((num_steps + 1) % args.logging_interval == 0) and args.rank == 0:
             print(
-                f"Step {num_steps+1}/{num_batches} of epoch {epoch+1}/{args.epochs} complete. Loss: {loss.item():.3f}"
+                f"""Step {num_steps+1}/{num_batches} of epoch {epoch+1}/{args.epochs} complete.
+                Loss: {loss.item():.3f}
+                Support Loss: {supp_loss.item():.3f}
+                """
             )
 
 
@@ -440,7 +500,8 @@ def train(args):
         optimizer.load_state_dict(osd)
 
     print("Loading Data...")
-    dataset = get_data(args, tokenizer=tokenizer)
+    dataset = get_data(args, tokenizer=tokenizer, dataset_type=args.dataset_type)
+    supp_dataset = get_data(args, tokenizer=tokenizer, dataset_type=args.supp_dataset_type)
 
     total_training_steps = (
         (args.num_samples) // (args.batch_size * args.world_size) 
@@ -476,12 +537,15 @@ def train(args):
     for epoch in range(resume_from_epoch, args.epochs):
         dataset.set_epoch(epoch)
         dataloader = dataset.dataloader
+        supp_dataset.set_epoch(epoch)
+        supp_dataloader = supp_dataset.dataloader
 
         train_epoch(
             args=args,
             model=ddp_model,
             epoch=epoch,
             dataloader=dataloader,
+            supp_dataloader=supp_dataloader,
             optimizer=optimizer,
             scheduler=scheduler,
             device_id=device_id,
@@ -499,6 +563,10 @@ if __name__ == "__main__":
 
     parser = get_args_parser()
     args = parser.parse_args()
+
+    assert (args.num_samples // args.batch_size) == (
+        args.supp_num_samples // args.supp_batch_size
+    ), "number of steps per epoch must be equal for both each datasets"
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
