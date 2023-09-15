@@ -125,8 +125,15 @@ def samples_from_grit(data):
                 filtered_bboxes = []
 
                 for (start, end, x_min, y_min, x_max, y_max, _) in chunks:
-                    phrase = caption[start:end]
-                    bbox = list(np.around(np.array([x_min, y_min, x_max, y_max]), 2))
+                    phrase = caption[int(start):int(end)]
+                    bbox = list(np.around(np.array(
+                        [
+                            x_min * width,
+                            y_min * height,
+                            x_max * width,
+                            y_max * height
+                        ]
+                    ).astype(np.int32), 2))
                     filtered_bboxes.append((phrase, bbox))
 
                 yield (
